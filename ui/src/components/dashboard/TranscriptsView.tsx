@@ -119,11 +119,29 @@ export function TranscriptsView({ initialOpen, onClearInitialOpen }: Transcripts
   }, [loading, initialOpen]);
 
   function openFile(semester: string, subject: string, file: string, excerpt?: string) {
-    setSelected({ semester, subject, file, excerpt });
+    // If semester/subject from deep-link is invalid (e.g. "N/A" stored in Pinecone),
+    // search the loaded tree to find the correct location for this file.
+    let resolvedSemester = semester;
+    let resolvedSubject = subject;
+    if (!tree[resolvedSemester]?.[resolvedSubject]) {
+      let found = false;
+      for (const [sem, subjects] of Object.entries(tree)) {
+        if (found) break;
+        for (const [sub, data] of Object.entries(subjects)) {
+          if (data.files.includes(file)) {
+            resolvedSemester = sem;
+            resolvedSubject = sub;
+            found = true;
+            break;
+          }
+        }
+      }
+    }
+    setSelected({ semester: resolvedSemester, subject: resolvedSubject, file, excerpt });
     setContent(null);
     setContentLoading(true);
     setCopiedFile(false);
-    fetch(`/transcripts/${semester}/${subject}/${file}`)
+    fetch(`/transcripts/${resolvedSemester}/${resolvedSubject}/${encodeURIComponent(file)}`)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.text();
