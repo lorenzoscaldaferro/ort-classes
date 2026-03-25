@@ -1,0 +1,195 @@
+{
+  "name": "ORT Chat Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ort-chat-agent",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "2fdafc1d-5adc-4f2a-b891-d8c09161c8b1",
+      "name": "Webhook ORT Chat",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        1904,
+        256
+      ],
+      "webhookId": "ort-chat-agent"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://n8n.flowai.it.com/webhook/ort-rag-search",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $json.body.query }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "eed732eb-f1ea-45c5-ab80-86663eee7876",
+      "name": "HTTP Request RAG ORT",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2160,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = Array.isArray($input.first().json)\n  ? $input.first().json\n  : [$input.first().json];\n\nconst query = $('Webhook ORT Chat').first().json.body.query;\n\nconst SUBJECT_LABELS = {\n  'economia_y_gestion':    'Economía y Gestión',\n  'business_intelligence': 'Business Intelligence',\n  'contabilidad_y_costos': 'Contabilidad y Costos',\n  'project_management':    'Project Management',\n  'ecommerce_y_servicios': 'E-commerce y Servicios',\n  'matematica_financiera':  'Matemática Financiera',\n};\n\nconst sources = [];\nconst contextChunks = [];\n\nfor (const r of results) {\n  const doc = r.document || {};\n  const text = (doc.pageContent || '').trim();\n  const meta = doc.metadata || {};\n  if (!text) continue;\n\n  contextChunks.push(text);\n\n  const titleRaw = meta.title || meta.source_file || '';\n  const dateStr = meta.date || (titleRaw.match(/^(\\d{2}-\\d{2}-\\d{4})/) || [])[1] || '';\n  const fullTitle = (dateStr && titleRaw && !titleRaw.startsWith(dateStr))\n    ? `${dateStr} - ${titleRaw}`\n    : titleRaw;\n\n  const semesterRaw = String(meta.semester || '');\n  const semesterDir = /^\\d+$/.test(semesterRaw) ? `semestre_${semesterRaw}` : semesterRaw;\n\n  const subject = meta.subject || '';\n  sources.push({\n    subject,\n    subjectLabel: SUBJECT_LABELS[subject] || subject.replace(/_/g, ' '),\n    semester: semesterDir,\n    title: fullTitle,\n    date: dateStr,\n    excerpt: text.length > 220 ? text.slice(0, 220) + '\\u2026' : text,\n    score: Math.round((r.score || 0) * 1000) / 1000,\n  });\n}\n\nconst context = contextChunks.slice(0, 8).join('\\n\\n---\\n\\n');\n\nreturn [{ json: { query, context, sources, hasContext: contextChunks.length > 0 } }];"
+      },
+      "id": "9952ff92-8bc9-40ac-80c2-dc3a05f92768",
+      "name": "Code Formatear ORT",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2416,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "chatModel": "gpt-4",
+        "prompt": {
+          "messages": [
+            {
+              "role": "system",
+              "content": "Sos un asistente académico personal. Respondé preguntas del estudiante basándote ÚNICAMENTE en los fragmentos de transcripciones de clases universitarias que se te proveen a continuación. Respondé en español rioplatense (Uruguay/Argentina), de forma clara, directa y concisa. Si la información en los fragmentos es parcial, sintetizá lo que se pueda inferir y aclaralo. No inventes información."
+            },
+            {
+              "content": "=Fragmentos de las clases:\n\n{{ $json.context }}\n\n---\n\nPregunta: {{ $json.query }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.2
+        },
+        "requestOptions": {}
+      },
+      "id": "069f9dec-e3d2-4e7e-94e0-ef88a1cd114f",
+      "name": "OpenAI Chat ORT",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.1,
+      "position": [
+        2656,
+        256
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "3QL29nsyEdUsSfVq",
+          "name": "ort-classes"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json;\n\nconst answer = raw.content\n  || raw.text\n  || (raw.message && raw.message.content)\n  || (raw.choices && raw.choices[0] && raw.choices[0].message && raw.choices[0].message.content)\n  || '';\n\nconst sources = $('Code Formatear ORT').first().json.sources || [];\n\nreturn [{ json: { answer, sources } }];"
+      },
+      "id": "bbf1220d-c78f-4de9-aa93-badb2149993c",
+      "name": "Code Ensamblar ORT",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2912,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "04409c53-68b0-4599-a742-2e7280ca25ca",
+      "name": "Respond ORT",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        3168,
+        256
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook ORT Chat": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request RAG ORT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request RAG ORT": {
+      "main": [
+        [
+          {
+            "node": "Code Formatear ORT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code Formatear ORT": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Chat ORT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat ORT": {
+      "main": [
+        [
+          {
+            "node": "Code Ensamblar ORT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code Ensamblar ORT": {
+      "main": [
+        [
+          {
+            "node": "Respond ORT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "e3e52f07-b180-4d5d-b208-b35d30741693",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "3387c18667bf292b77aa12b7e04991902deeb2e4849a60ecf906aba25577920d"
+  },
+  "id": "Pxm59w8qRayyYQPM",
+  "tags": []
+}
