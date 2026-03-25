@@ -1,0 +1,40 @@
+name: Vimeo Scraper
+
+on:
+  schedule:
+    - cron: '0 23 * * 1-4'   # Mon-Thu 23:00 UTC = 20:00 UYT
+  workflow_dispatch:            # allow manual trigger from GitHub UI
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4 openai
+
+      - name: Run scraper
+        env:
+          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+          PINECONE_HOST: ${{ secrets.PINECONE_HOST }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SUBJECTS_JSON: ${{ secrets.SUBJECTS_JSON }}
+        run: python vimeo_scraper.py
+
+      - name: Commit new transcripts
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add transcripts/ transcripts_index.json
+          git diff --staged --quiet || git commit -m "chore: new transcripts $(date '+%Y-%m-%d')"
+          git push

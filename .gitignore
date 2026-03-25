@@ -1,0 +1,9 @@
+config.json
+__pycache__/
+*.pyc
+.env
+cron.log
+*.log
+node_modules/
+ui/dist/
+ui/node_modules/
