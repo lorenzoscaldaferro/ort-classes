@@ -2,6 +2,25 @@
 
 All notable changes to the ORT Vimeo Scraper & RAG Knowledge Base project will be documented in this file.
 
+## [Unreleased] - 2026-03-26 (NotebookLM Kortex-style + Scraper Fix)
+
+### Added
+- **`generate_raw_files.py`**: New script that concatenates all transcripts per subject into `.txt` files saved to `ui/public/raw/`. Netlify serves them as public static URLs — replaces the Google Drive approach entirely.
+- **`notebooklm_sync.py`**: Async script using `pynotebooklm` (reverse-engineered Google batchexecute RPC) to delete and re-add URL sources in NotebookLM notebooks after each scrape. Requires `NOTEBOOKLM_AUTH_JSON`, `NOTEBOOKLM_NOTEBOOK_IDS`, and `NETLIFY_URL` GitHub Secrets. Exits cleanly if not configured.
+- **`NOTEBOOKLM_SETUP.md`**: Rewritten with simplified 6-step setup (no Google Cloud, no service account needed).
+
+### Changed
+- **`scraper.yml`**: Replaced Google Drive sync step with `generate_raw_files.py` + `notebooklm_sync.py`. pip install now uses `pynotebooklm` instead of `google-auth/google-api-python-client`. Playwright browsers installed conditionally (only when `NOTEBOOKLM_AUTH_JSON` secret is set). Commit step now includes `ui/public/raw/`.
+- **`vimeo_scraper.py`**: Fixed showcase authentication — Vimeo now renders password forms client-side (JavaScript), so the old HTML detection condition failed for all showcases. New approach: always attempt auth via known Vimeo showcase `/auth` endpoint with session cookies. Added Strategy B (Next.js `__NEXT_DATA__` JSON parsing) and Strategy C (regex fallback) for video discovery when `<a>` links aren't in the server-rendered HTML.
+
+### Removed
+- **`google_drive_sync.py`**: Deleted. Google Drive approach replaced by static Netlify URL sources.
+
+### Bug diagnosed
+- **Scraper found 0 videos (Mar 25 run)**: Root cause confirmed — "No password protection detected on this page." for all 5 showcases. Vimeo migrated showcases to client-side rendering; the conditions `"This showcase is private" in html` and `soup.find('input', {'name': 'password'})` both return False for the server-rendered shell. The fix attempts auth unconditionally and adds extra video discovery strategies. If this still fails, the fallback is Playwright-based scraping (node_modules already has playwright installed).
+
+---
+
 ## [Unreleased] - 2026-03-24 (Phase 4 — Bug Fixes)
 
 ### Fixed

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { BookOpen, Check, ChevronRight, Copy, FileText, Loader2, X } from "lucide-react";
+import { BookOpen, Check, ChevronRight, Copy, ExternalLink, FileText, Loader2, X } from "lucide-react";
 
 interface SubjectData {
   label: string;
@@ -23,6 +23,16 @@ interface TranscriptsViewProps {
   initialOpen?: TranscriptDeepLink | null;
   onClearInitialOpen?: () => void;
 }
+
+// Notebook URLs — fill in after completing the NotebookLM setup (see NOTEBOOKLM_SETUP.md)
+const SUBJECT_NOTEBOOKS: Record<string, string> = {
+  business_intelligence:   "https://notebooklm.google.com/notebook/PLACEHOLDER_BI",
+  economia_y_gestion:      "https://notebooklm.google.com/notebook/PLACEHOLDER_EG",
+  contabilidad_y_costos:   "https://notebooklm.google.com/notebook/PLACEHOLDER_CC",
+  project_management:      "https://notebooklm.google.com/notebook/PLACEHOLDER_PM",
+  ecommerce_y_servicios:   "https://notebooklm.google.com/notebook/PLACEHOLDER_ES",
+  matematica_financiera:   "https://notebooklm.google.com/notebook/PLACEHOLDER_MF",
+};
 
 const SUBJECT_COLORS: Record<string, string> = {
   business_intelligence:   "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
@@ -268,6 +278,19 @@ export function TranscriptsView({ initialOpen, onClearInitialOpen }: Transcripts
                           <span className="text-[11px] text-muted-foreground ml-auto">
                             {files.length} {files.length === 1 ? "clase" : "clases"}
                           </span>
+                          {SUBJECT_NOTEBOOKS[subject] && !SUBJECT_NOTEBOOKS[subject].includes("PLACEHOLDER") && (
+                            <a
+                              href={SUBJECT_NOTEBOOKS[subject]}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              title="Abrir notebook en NotebookLM"
+                              className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium text-muted-foreground/60 hover:text-foreground hover:bg-muted transition-all"
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                              NotebookLM
+                            </a>
+                          )}
                         </div>
                         <ul className="divide-y divide-border">
                           {files.map((file) => {

@@ -1,4 +1,4 @@
-import { MessageSquare, BookOpen } from "lucide-react";
+import { MessageSquare, BookOpen, ExternalLink } from "lucide-react";
 import type { ActiveView } from "@/pages/Index";
 
 interface DashboardSidebarProps {
@@ -9,6 +9,15 @@ interface DashboardSidebarProps {
 const navItems = [
   { id: "chat" as ActiveView,        label: "Chat con mis clases", icon: MessageSquare },
   { id: "transcripts" as ActiveView, label: "Transcripciones",     icon: BookOpen },
+];
+
+const NOTEBOOKLM_NOTEBOOKS = [
+  { label: "Business Intelligence",  url: "https://notebooklm.google.com/notebook/PLACEHOLDER_BI" },
+  { label: "Economía y Gestión",     url: "https://notebooklm.google.com/notebook/PLACEHOLDER_EG" },
+  { label: "Contabilidad y Costos",  url: "https://notebooklm.google.com/notebook/PLACEHOLDER_CC" },
+  { label: "Project Management",     url: "https://notebooklm.google.com/notebook/PLACEHOLDER_PM" },
+  { label: "E-commerce y Servicios", url: "https://notebooklm.google.com/notebook/PLACEHOLDER_ES" },
+  { label: "Matemática Financiera",  url: "https://notebooklm.google.com/notebook/PLACEHOLDER_MF" },
 ];
 
 export function DashboardSidebar({ activeView, onViewChange }: DashboardSidebarProps) {
@@ -48,6 +57,30 @@ export function DashboardSidebar({ activeView, onViewChange }: DashboardSidebarP
           );
         })}
       </nav>
+
+      {/* NotebookLM */}
+      <div className="px-2.5 pb-3">
+        <div className="border-t border-sidebar-border pt-3">
+          <p className="text-[9px] font-semibold uppercase tracking-[0.15em] text-sidebar-foreground/50 px-3 mb-2">
+            Estudiar en NotebookLM
+          </p>
+          <div className="space-y-0.5">
+            {NOTEBOOKLM_NOTEBOOKS.map((nb) => (
+              <a
+                key={nb.label}
+                href={nb.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12px] text-sidebar-foreground/70 hover:text-sidebar-accent-foreground hover:bg-sidebar-accent/50 transition-all duration-150 group"
+              >
+                <BookOpen className="h-3 w-3 shrink-0 text-sidebar-foreground/40 group-hover:text-primary/70" />
+                <span className="flex-1 truncate">{nb.label}</span>
+                <ExternalLink className="h-2.5 w-2.5 shrink-0 opacity-0 group-hover:opacity-50 transition-opacity" />
+              </a>
+            ))}
+          </div>
+        </div>
+      </div>
 
       {/* Footer */}
       <div className="p-3 border-t border-sidebar-border">

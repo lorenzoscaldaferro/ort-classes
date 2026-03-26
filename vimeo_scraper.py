@@ -228,38 +228,96 @@ def extract_vtt_from_showcase(showcase_url, password, subject_name, semester):
 
     soup = BeautifulSoup(response.text, 'html.parser')
 
-    if "This showcase is private" in response.text or soup.find('input', {'name': 'password'}):
-        print("[*] Password protection detected. Attempting to log in...")
+    # Vimeo renders password forms client-side (JS), so we can't rely on HTML detection.
+    # Always attempt auth via the known Vimeo showcase password endpoint.
+    print("[*] Attempting password authentication...")
+    showcase_id = showcase_url.rstrip('/').split('/')[-1]
+    auth_url = f"https://vimeo.com/showcase/{showcase_id}/auth"
 
-        form = soup.find('form')
-        action_url = showcase_url
-        if form and form.get('action'):
-            action_url = urljoin(showcase_url, form.get('action'))
+    # Also collect any hidden fields from the form if present (fallback)
+    form = soup.find('form')
+    data = {'password': password, 'token': ''}
+    if form:
+        for input_tag in form.find_all('input', type='hidden'):
+            name = input_tag.get('name')
+            if name:
+                data[name] = input_tag.get('value', '')
+        if form.get('action'):
+            auth_url = urljoin(showcase_url, form.get('action'))
 
-        data = {'password': password}
-        if form:
-            for input_tag in form.find_all('input', type='hidden'):
-                data[input_tag.get('name')] = input_tag.get('value')
+    auth_resp = session.post(
+        auth_url,
+        data=data,
+        headers={
+            'Referer': showcase_url,
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+    )
+    print(f"[*] Auth response status: {auth_resp.status_code}")
 
-        auth_resp = session.post(action_url, data=data, headers={'Referer': showcase_url})
-        if "This showcase is private" in auth_resp.text:
-            print("[-] Incorrect password or login failed.")
-            return
+    # After auth, re-fetch the showcase page with the session cookies
+    page_resp = session.get(showcase_url)
+    if page_resp.status_code != 200:
+        print(f"[-] Failed to load showcase after auth. Status: {page_resp.status_code}")
+        return
 
-        print("[+] Successfully authenticated against showcase.")
-        html_content = auth_resp.text
-    else:
-        print("[*] No password protection detected on this page.")
-        html_content = response.text
+    html_content = page_resp.text
+
+    if "This showcase is private" in html_content or "incorrect password" in html_content.lower():
+        print("[-] Authentication failed — incorrect password or Vimeo structure changed.")
+        return
+
+    print("[+] Showcase loaded after auth attempt.")
 
     soup = BeautifulSoup(html_content, 'html.parser')
 
     video_links = set()
+
+    # Strategy A: Parse <a href> links (works if Vimeo renders server-side)
     for a in soup.find_all('a', href=True):
         href = a['href']
-        if '/video/' in href and str(showcase_url.split('/')[-1]) in href:
+        if '/video/' in href and showcase_id in href:
             full_url = urljoin(showcase_url, href)
             video_links.add(full_url)
+
+    # Strategy B: Extract video IDs from __NEXT_DATA__ JSON (Next.js client-side render)
+    if not video_links:
+        next_data_tag = soup.find('script', {'id': '__NEXT_DATA__'})
+        if next_data_tag:
+            try:
+                next_data = json.loads(next_data_tag.string)
+                # Navigate common Next.js props structures to find clip/video IDs
+                clips = (
+                    next_data.get('props', {})
+                    .get('pageProps', {})
+                    .get('clips', [])
+                ) or (
+                    next_data.get('props', {})
+                    .get('pageProps', {})
+                    .get('album', {})
+                    .get('clips', [])
+                )
+                for clip in clips:
+                    vid_id = clip.get('id') or clip.get('clip_id')
+                    if vid_id:
+                        video_links.add(f"https://vimeo.com/showcase/{showcase_id}/video/{vid_id}")
+                if clips:
+                    print(f"[*] Found {len(clips)} clip(s) via __NEXT_DATA__")
+            except (json.JSONDecodeError, KeyError, TypeError) as e:
+                print(f"[!] __NEXT_DATA__ parse failed: {e}")
+
+    # Strategy C: Find video IDs in inline JSON blobs (fallback regex)
+    if not video_links:
+        video_id_matches = re.findall(r'"clip_id"\s*:\s*(\d+)', html_content)
+        if not video_id_matches:
+            video_id_matches = re.findall(
+                rf'/showcase/{re.escape(showcase_id)}/video/(\d+)', html_content
+            )
+        for vid_id in set(video_id_matches):
+            video_links.add(f"https://vimeo.com/showcase/{showcase_id}/video/{vid_id}")
+        if video_id_matches:
+            print(f"[*] Found {len(video_id_matches)} video ID(s) via regex fallback")
 
     print(f"[*] Found {len(video_links)} videos in the showcase.")
 

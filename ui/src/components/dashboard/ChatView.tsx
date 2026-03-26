@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, User, Copy, Check, Plus } from "lucide-react";
+import { Send, User, Copy, Check, Plus, RotateCcw } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 // ---------------------------------------------------------------------------
@@ -21,6 +21,8 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   sources?: Source[];
+  isError?: boolean;
+  retryQuery?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -322,13 +324,15 @@ export function ChatView({ messages, onMessagesChange, onOpenTranscript }: ChatV
           sources: data.sources ?? [],
         },
       ]);
-    } catch (err) {
+    } catch {
       setMessages([
         ...history,
         {
           id: (Date.now() + 1).toString(),
           role: "assistant",
-          content: `Lo siento, hubo un error al procesar tu pregunta. Verificá que el workflow de n8n esté activo.\n\nDetalle: ${err}`,
+          content: "No se pudo conectar con el servidor. Intentá de nuevo.",
+          isError: true,
+          retryQuery: messageText,
         },
       ]);
     } finally {
@@ -477,12 +481,24 @@ export function ChatView({ messages, onMessagesChange, onOpenTranscript }: ChatV
                         className={`overflow-hidden ${
                           msg.role === "user"
                             ? "bg-gradient-to-br from-blue-500 via-blue-600 to-blue-700 text-white ml-auto rounded-3xl rounded-br-sm shadow-lg shadow-blue-900/20"
-                            : "bg-card border border-border rounded-2xl rounded-bl-md"
+                            : msg.isError
+                              ? "bg-amber-50 border border-amber-200 dark:bg-amber-950/30 dark:border-amber-800/50 rounded-2xl rounded-bl-md"
+                              : "bg-card border border-border rounded-2xl rounded-bl-md"
                         }`}
                       >
                         {msg.role === "assistant" ? (
                           <div className="px-3 sm:px-4 py-2.5 sm:py-3">
                             <RichContent content={msg.content} />
+                            {msg.isError && msg.retryQuery && (
+                              <button
+                                onClick={() => handleSend(msg.retryQuery)}
+                                disabled={isTyping}
+                                className="mt-2.5 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 text-[11px] font-medium hover:bg-amber-200 dark:hover:bg-amber-900/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                              >
+                                <RotateCcw className="h-3 w-3" />
+                                Reintentar
+                              </button>
+                            )}
                           </div>
                         ) : (
                           <div className="px-3 sm:px-4 py-2 sm:py-2.5">
