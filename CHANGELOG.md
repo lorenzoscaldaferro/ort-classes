@@ -2,6 +2,26 @@
 
 All notable changes to the ORT Vimeo Scraper & RAG Knowledge Base project will be documented in this file.
 
+## [Unreleased] - 2026-03-27 (NotebookLM sync fix — notebooklm-mcp)
+
+### Fixed
+- **NotebookLM sync auth**: `pynotebooklm auth login` was blocked by Google's automated browser detection (Playwright Chromium triggers "No puedes acceder"). Replaced pynotebooklm entirely with `notebooklm-mcp`, which uses `notebooklm-mcp-auth` (real Chrome via CDP — not detected as a bot).
+- **`notebooklm_sync.py`**: Rewrote to use `notebooklm_mcp.api_client.NotebookLMClient` directly. No asyncio, no Playwright. `NOTEBOOKLM_AUTH_JSON` format is now `~/.notebooklm-mcp/auth.json` (dict-style cookies + csrf_token).
+- **`scraper.yml`**: Replaced `pynotebooklm` with `notebooklm-mcp` in `pip install`. Removed the conditional Playwright install step (saves ~2-3 min per CI run).
+
+### Done
+- `NOTEBOOKLM_AUTH_JSON` GitHub secret set with real Chrome cookies via `notebooklm-mcp-auth`.
+- Tested locally: 5/5 ORT notebooks synced successfully (delete old source → re-add URL).
+- All 7 GitHub secrets now configured: `PINECONE_API_KEY`, `PINECONE_HOST`, `OPENAI_API_KEY`, `SUBJECTS_JSON`, `NETLIFY_URL`, `NOTEBOOKLM_NOTEBOOK_IDS`, `NOTEBOOKLM_AUTH_JSON`.
+
+### Auth renewal (when cookies expire ~2-4 weeks)
+```bash
+notebooklm-mcp-auth
+cat ~/.notebooklm-mcp/auth.json | gh secret set NOTEBOOKLM_AUTH_JSON --repo lorenzoscaldaferro/ort-classes
+```
+
+---
+
 ## [Unreleased] - 2026-03-26 (NotebookLM Kortex-style + Scraper Fix)
 
 ### Added

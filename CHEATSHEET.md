@@ -103,9 +103,15 @@ rsync -a transcripts/ /Users/lolescaldaferro/Antigravity/Vimeo/transcripts/
 
 ### Instalar dependencias Python (cloud scraper)
 ```bash
-pip install requests beautifulsoup4 openai
+pip install requests beautifulsoup4 openai notebooklm-mcp
 ```
 Sin Flask, sin Playwright. Pinecone se llama vía `requests` directamente.
+
+### Renovar auth de NotebookLM (cuando las cookies expiran ~2-4 semanas)
+```bash
+notebooklm-mcp-auth   # abre Chrome real → login normal con Google
+cat ~/.notebooklm-mcp/auth.json | gh secret set NOTEBOOKLM_AUTH_JSON --repo lorenzoscaldaferro/ort-classes
+```
 
 ### Build de la UI (Netlify lo corre automáticamente en cada push)
 ```bash
@@ -123,7 +129,7 @@ npm run build  # copia transcripts/ a public/ y compila con Vite
 | GitHub Actions scraper | Lun-Jue 23:00 UTC (20:00 UYT) | GitHub (nube, siempre activo) |
 | `sync-local.sh` | Lun-Jue 23:20 UTC (20:20 UYT) | Mac (solo si está encendida) |
 
-- **GitHub Actions**: corre `vimeo_scraper.py` en Ubuntu, commitea nuevos transcripts al repo → Netlify rebuilds automáticamente
+- **GitHub Actions**: corre `vimeo_scraper.py`, `generate_raw_files.py`, commitea, luego `notebooklm_sync.py` refresca las fuentes en los 5 notebooks de NotebookLM
 - **sync-local.sh**: hace `git pull` + `rsync` para que la Mac tenga los transcripts nuevos en local
 - **Logs**: se acumulan en `/Users/lolescaldaferro/Antigravity/Vimeo/cron.log`
 
