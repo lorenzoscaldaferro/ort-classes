@@ -144,8 +144,9 @@ def save_transcript(subject_name, semester, video_id, video_title, upload_date, 
     os.makedirs(output_dir, exist_ok=True)
     filepath = os.path.join(output_dir, filename)
 
-    if os.path.exists(filepath):
-        print(f"    [~] Skipping (already exists): {filename}")
+    existing = [f for f in os.listdir(output_dir) if f.startswith(f"{date_str} - ")]
+    if existing:
+        print(f"    [~] Skipping (already exists): {existing[0]}")
         return False, date_str
 
     header = (
