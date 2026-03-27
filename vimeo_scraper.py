@@ -315,7 +315,17 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                 or video_data.get('created_time', '')
             )
 
-            print(f"\n[PW] Processing: {vid_title} (ID: {vid_id})")
+            # Vimeo ORT titles embed the lecture date: "FACS-... | DD-MM-YYYY"
+            # Extract the date, convert to YYYY-MM-DD (for save_transcript parser),
+            # and strip the " | DD-MM-YYYY" suffix from the title.
+            date_in_title = re.search(r'\s*\|\s*(\d{2}-\d{2}-\d{4})\s*$', vid_title)
+            if date_in_title:
+                day, month, year = date_in_title.group(1).split('-')
+                if not upload_date:
+                    upload_date = f"{year}-{month}-{day}"
+                vid_title = vid_title[:date_in_title.start()].strip()
+
+            print(f"\n[PW] Processing: {vid_title} (ID: {vid_id})", flush=True)
 
             # Quick skip-check before navigating
             date_str_check = datetime.now().strftime('%d-%m-%Y')
