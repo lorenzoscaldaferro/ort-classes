@@ -309,26 +309,39 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                 print(f"    [~] Skipping (already exists)")
                 continue
 
-            # --- Config extraction: 3-layer fallback ---
+            # --- Config extraction ---
             # Layer 1: already captured by response listener during showcase load
             config = player_configs.get(vid_id)
 
             if not config:
-                # Layer 2: navigate to video page; wait for DOM + JS execution.
-                # The response listener will capture the /config XHR if the player
-                # loads in the main frame. If not (e.g. sandboxed iframe), Layer 3 handles it.
-                video_url = f"https://vimeo.com/showcase/{showcase_id}/video/{vid_id}"
+                # Layer 2: click the video thumbnail *within* the showcase page.
+                # This triggers the SPA client-side router (history.pushState), which
+                # preserves the in-memory showcase auth state and loads the player inline.
+                # page.goto(video_url) would do a full HTTP reload, destroying the JS
+                # auth state and preventing the player config XHR from being signed.
                 try:
-                    page.goto(video_url, wait_until='domcontentloaded', timeout=30000)
-                except Exception:
-                    pass
-                page.wait_for_timeout(5000)
-                config = player_configs.get(vid_id)
+                    # Return to showcase overview if we've navigated away from it
+                    if showcase_id not in page.url:
+                        page.goto(showcase_url, wait_until='domcontentloaded', timeout=30000)
+                        page.wait_for_timeout(4000)
+
+                    clicked = page.evaluate(f"""() => {{
+                        const el = document.querySelector('[href*="/video/{vid_id}"]');
+                        if (el) {{ el.click(); return true; }}
+                        return false;
+                    }}""")
+                    if clicked:
+                        print(f"    [PW] Clicked thumbnail — waiting for player config XHR...")
+                        page.wait_for_timeout(6000)
+                        config = player_configs.get(vid_id)
+                    else:
+                        print(f"    [!] No thumbnail link found for video {vid_id}")
+                except Exception as e:
+                    print(f"    [!] Click navigation failed: {e}")
 
             if not config:
-                # Layer 3: read clip_page_config JS global, then fetch the config_url
-                # it contains. This works when Vimeo embeds config data in the page's
-                # Next.js/React globals instead of making a visible XHR.
+                # Layer 3: read clip_page_config JS global and fetch the signed config_url.
+                # Used when the XHR isn't caught by the response listener (e.g. iframe context).
                 try:
                     raw = page.evaluate("""() => {
                         const cc = window.vimeo && window.vimeo.clip_page_config;
