@@ -32,6 +32,7 @@ jobs:
           PINECONE_HOST: ${{ secrets.PINECONE_HOST }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           SUBJECTS_JSON: ${{ secrets.SUBJECTS_JSON }}
+          PYTHONUNBUFFERED: "1"
         run: python vimeo_scraper.py
 
       - name: Generate raw files for NotebookLM

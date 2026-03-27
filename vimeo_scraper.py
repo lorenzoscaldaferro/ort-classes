@@ -270,7 +270,27 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
 
         # Extra wait for the authenticated video list API call to complete
         page.wait_for_timeout(3000)
-        print(f"[PW] Found {len(videos)} unique video(s) from API interception")
+        print(f"[PW] Found {len(videos)} unique video(s) from API interception", flush=True)
+
+        # Capture session cookies for direct API calls (bypass browser for config fetching)
+        vimeo_cookies = {
+            c['name']: c['value']
+            for c in context.cookies()
+            if 'vimeo' in c.get('domain', '')
+        }
+        print(f"[PW] Session cookies: {list(vimeo_cookies.keys())}", flush=True)
+
+        # Debug: log sample hrefs in the page DOM to understand thumbnail selector format
+        try:
+            sample_hrefs = page.evaluate("""() => {
+                return Array.from(document.querySelectorAll('a[href]'))
+                    .map(a => a.getAttribute('href'))
+                    .filter(h => h && h.includes('video'))
+                    .slice(0, 5);
+            }""")
+            print(f"[PW] Sample video hrefs in DOM: {sample_hrefs}", flush=True)
+        except Exception:
+            pass
 
         if not videos:
             print("[-] No videos found via Playwright — check password or showcase URL")
@@ -314,54 +334,74 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
             config = player_configs.get(vid_id)
 
             if not config:
-                # Layer 2: click the video thumbnail *within* the showcase page.
-                # This triggers the SPA client-side router (history.pushState), which
-                # preserves the in-memory showcase auth state and loads the player inline.
-                # page.goto(video_url) would do a full HTTP reload, destroying the JS
-                # auth state and preventing the player config XHR from being signed.
+                # Layer 2: direct HTTP fetch using Playwright session cookies.
+                # After showcase auth, Vimeo sets cookies that authorize the player
+                # config endpoint. We bypass the browser for this step (much faster).
                 try:
-                    # Return to showcase overview if we've navigated away from it
+                    config_url = f"https://player.vimeo.com/video/{vid_id}/config"
+                    r = requests.get(
+                        config_url,
+                        cookies=vimeo_cookies,
+                        headers={
+                            'Referer': showcase_url,
+                            'Origin': 'https://vimeo.com',
+                            'User-Agent': (
+                                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+                                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                                'Chrome/122.0.0.0 Safari/537.36'
+                            ),
+                        },
+                        timeout=20,
+                    )
+                    if r.status_code == 200:
+                        candidate = r.json()
+                        # Reject if text_tracks is empty (unauthenticated response)
+                        if candidate.get('request', {}).get('text_tracks'):
+                            config = candidate
+                            print(f"    [PW] Config via cookie fetch (Layer 2)")
+                        else:
+                            print(f"    [!] Cookie fetch returned empty text_tracks")
+                    else:
+                        print(f"    [!] Cookie fetch status: {r.status_code}")
+                except Exception as e:
+                    print(f"    [!] Cookie fetch failed: {e}")
+
+            if not config:
+                # Layer 3: click the video thumbnail within the showcase page to trigger
+                # client-side player loading with proper in-memory auth context.
+                try:
                     if showcase_id not in page.url:
                         page.goto(showcase_url, wait_until='domcontentloaded', timeout=30000)
                         page.wait_for_timeout(4000)
 
                     clicked = page.evaluate(f"""() => {{
-                        const el = document.querySelector('[href*="/video/{vid_id}"]');
+                        const el = document.querySelector('[href*="{vid_id}"]') ||
+                                   document.querySelector('[data-id="{vid_id}"]') ||
+                                   document.querySelector('[data-clip-id="{vid_id}"]');
                         if (el) {{ el.click(); return true; }}
                         return false;
                     }}""")
                     if clicked:
-                        print(f"    [PW] Clicked thumbnail — waiting for player config XHR...")
+                        print(f"    [PW] Clicked thumbnail — waiting for player...", flush=True)
                         page.wait_for_timeout(6000)
                         config = player_configs.get(vid_id)
+                        if not config:
+                            # Also try JS global after click
+                            raw = page.evaluate("""() => {
+                                const cc = window.vimeo && window.vimeo.clip_page_config;
+                                if (cc) return cc;
+                                return null;
+                            }""")
+                            if raw:
+                                config_url2 = (raw.get('player') or {}).get('config_url')
+                                if config_url2:
+                                    rr = requests.get(config_url2, timeout=20)
+                                    if rr.status_code == 200:
+                                        config = rr.json()
                     else:
-                        print(f"    [!] No thumbnail link found for video {vid_id}")
+                        print(f"    [!] No thumbnail found for {vid_id} — DOM hrefs may use different format")
                 except Exception as e:
-                    print(f"    [!] Click navigation failed: {e}")
-
-            if not config:
-                # Layer 3: read clip_page_config JS global and fetch the signed config_url.
-                # Used when the XHR isn't caught by the response listener (e.g. iframe context).
-                try:
-                    raw = page.evaluate("""() => {
-                        const cc = window.vimeo && window.vimeo.clip_page_config;
-                        if (cc) return cc;
-                        const nd = window.__NEXT_DATA__;
-                        if (nd) {
-                            const pp = nd.props && nd.props.pageProps;
-                            if (pp && pp.clipPageConfig) return pp.clipPageConfig;
-                        }
-                        return null;
-                    }""")
-                    if raw:
-                        config_url = (raw.get('player') or {}).get('config_url')
-                        if config_url:
-                            print(f"    [PW] Fetching config from JS global...")
-                            r = requests.get(config_url, timeout=20)
-                            if r.status_code == 200:
-                                config = r.json()
-                except Exception as e:
-                    print(f"    [!] JS global read failed: {e}")
+                    print(f"    [!] Click/eval failed: {e}")
 
             if not config:
                 print(f"    [!] No player config captured — skipping")
