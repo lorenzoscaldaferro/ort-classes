@@ -280,27 +280,23 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
         }
         print(f"[PW] Session cookies: {list(vimeo_cookies.keys())}", flush=True)
 
-        # Pre-capture the initially-active video config from the showcase page.
-        # The showcase auto-loads the first video on entry, so its clip_page_config
-        # is already in the JS globals — clicking that thumbnail later won't reload it.
-        try:
-            raw_init = page.evaluate(
-                "() => (window.vimeo && window.vimeo.clip_page_config) || null"
-            )
-            if raw_init:
-                vid_init = str(
-                    (raw_init.get('clip') or raw_init.get('video') or {}).get('id', '')
-                )
-                config_url_init = (raw_init.get('player') or {}).get('config_url')
-                if vid_init.isdigit() and config_url_init:
-                    r_init = requests.get(config_url_init, timeout=20)
-                    if r_init.status_code == 200:
-                        c_init = r_init.json()
-                        if c_init.get('request', {}).get('text_tracks'):
-                            player_configs[vid_init] = c_init
-                            print(f"[PW] Pre-captured active video config: {vid_init}", flush=True)
-        except Exception as e:
-            print(f"[PW] Pre-capture warning: {e}", flush=True)
+        # "Warm up" by clicking the last video in the list before the main loop.
+        # The showcase auto-selects the first video on page load; clicking it again
+        # does nothing (already active). By activating the last video first, every
+        # subsequent click in the loop triggers a real player state change.
+        if len(videos) > 1:
+            last_uri = videos[-1].get('uri', '')
+            last_id = last_uri.split('/')[-1] if last_uri else str(videos[-1].get('id', ''))
+            if last_id.isdigit():
+                try:
+                    page.evaluate(f"""() => {{
+                        const el = document.querySelector('[href*="?video={last_id}"]');
+                        if (el) el.click();
+                    }}""")
+                    page.wait_for_timeout(3000)
+                    print(f"[PW] Warm-up click on last video ({last_id})", flush=True)
+                except Exception:
+                    pass
 
         if not videos:
             print("[-] No videos found via Playwright — check password or showcase URL")
