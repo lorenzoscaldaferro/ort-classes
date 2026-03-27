@@ -8,24 +8,24 @@ Para cada materia configurada, este script:
 3. Re-agrega la misma URL — NotebookLM re-fetcha el contenido actualizado
 
 Requiere estas env vars (GitHub Secrets):
-  NOTEBOOKLM_AUTH_JSON   — Contenido JSON de ~/.pynotebooklm/auth.json
-                           (generado localmente con: pynotebooklm auth)
+  NOTEBOOKLM_AUTH_JSON    — Contenido JSON de ~/.notebooklm-mcp/auth.json
+                            (generado localmente con: notebooklm-mcp-auth)
   NOTEBOOKLM_NOTEBOOK_IDS — JSON map: {"subject_name": "notebook_id", ...}
   NETLIFY_URL             — URL base del sitio Netlify (sin trailing slash)
-                           Ej: https://ort-classes.netlify.app
+                            Ej: https://ort-classes.netlify.app
 
 Si alguna de estas env vars no está seteada, el script sale limpiamente
 sin marcar el workflow como fallido.
 
 Setup inicial (una sola vez, localmente):
-  pip3 install pynotebooklm
-  python3 -m pynotebooklm auth   # abre browser → login con Google
-  cat ~/.pynotebooklm/auth.json  # copiar como NOTEBOOKLM_AUTH_JSON en GitHub Secrets
+  pip3 install notebooklm-mcp
+  notebooklm-mcp-auth      # abre Chrome real → login con Google
+  cat ~/.notebooklm-mcp/auth.json  # copiar como NOTEBOOKLM_AUTH_JSON en GitHub Secrets
 
-Nota: Las cookies expiran cada ~2 semanas. Repetir el paso de auth cuando fallen.
+Nota: Las cookies expiran cada ~2-4 semanas. Repetir notebooklm-mcp-auth y actualizar
+el secret NOTEBOOKLM_AUTH_JSON cuando fallen.
 """
 
-import asyncio
 import json
 import os
 from pathlib import Path
@@ -48,48 +48,51 @@ def load_config() -> dict | None:
         return None
 
     try:
+        auth_data = json.loads(auth_json)
+    except json.JSONDecodeError as e:
+        print(f"[notebooklm-sync] NOTEBOOKLM_AUTH_JSON JSON inválido: {e}")
+        return None
+
+    try:
         notebook_ids = json.loads(notebook_ids_raw)
     except json.JSONDecodeError as e:
         print(f"[notebooklm-sync] NOTEBOOKLM_NOTEBOOK_IDS JSON inválido: {e}")
         return None
 
     return {
-        'auth_json': auth_json,
+        'auth_data': auth_data,
         'notebook_ids': notebook_ids,
         'netlify_url': netlify_url,
     }
 
 
-def write_auth_file(auth_json: str) -> Path:
-    """Escribe el JSON de auth al archivo que AuthManager espera."""
-    auth_path = Path.home() / '.pynotebooklm' / 'auth.json'
-    auth_path.parent.mkdir(parents=True, exist_ok=True)
-    auth_path.write_text(auth_json)
-    auth_path.chmod(0o600)
-    return auth_path
-
-
-async def sync_notebook(sources_mgr, notebook_id: str, subject: str, raw_url: str) -> bool:
+def sync_notebook(client, notebook_id: str, subject: str, raw_url: str) -> bool:
     """
     Actualiza la fuente URL de un notebook.
     Borra la fuente existente (si existe) y agrega la URL actualizada.
     """
     try:
-        # 1. Listar fuentes existentes
-        existing = await sources_mgr.list_sources(notebook_id)
+        # 1. Listar fuentes existentes con sus URLs
+        existing = client.get_notebook_sources_with_types(notebook_id)
 
         # 2. Borrar fuentes que apuntan a nuestros raw files
         for source in existing:
-            source_url = getattr(source, 'url', '') or getattr(source, 'uri', '') or ''
+            source_url = source.get('url') or ''
             if f'/raw/{subject}' in source_url or (subject in source_url and 'netlify' in source_url):
-                print(f"  [-] Borrando fuente antigua: {source_url or source.id}")
-                await sources_mgr.delete(notebook_id, source.id)
+                print(f"  [-] Borrando fuente antigua: {source_url or source['id']}")
+                client.delete_source(source['id'])
 
         # 3. Agregar URL actualizada
         print(f"  [+] Agregando: {raw_url}")
-        result = await sources_mgr.add_url(notebook_id, raw_url)
-        title = getattr(result, 'title', '') or raw_url
-        print(f"  [✓] Fuente agregada: {title}")
+        result = client.add_url_source(notebook_id, raw_url)
+        if result and isinstance(result, dict):
+            status = result.get('status', 'ok')
+            if status == 'timeout':
+                print(f"  [~] Timeout (puede que haya funcionado igual): {result.get('message', '')}")
+            else:
+                print(f"  [✓] Fuente agregada")
+        else:
+            print(f"  [✓] Fuente agregada")
         return True
 
     except Exception as e:
@@ -97,33 +100,39 @@ async def sync_notebook(sources_mgr, notebook_id: str, subject: str, raw_url: st
         return False
 
 
-async def run(config: dict) -> None:
-    auth_path = write_auth_file(config['auth_json'])
-
+def run(config: dict) -> None:
     try:
-        from pynotebooklm import NotebookLMClient
-        from pynotebooklm.auth import AuthManager
+        from notebooklm_mcp.api_client import NotebookLMClient
     except ImportError:
-        print("[notebooklm-sync] pynotebooklm no instalado. Correr: pip3 install pynotebooklm")
+        print("[notebooklm-sync] notebooklm-mcp no instalado. Correr: pip3 install notebooklm-mcp")
         return
 
-    auth = AuthManager(auth_path=auth_path)
-    if not auth.is_authenticated():
-        print("[notebooklm-sync] Auth inválida o expirada.")
-        print("  Solución: correr 'python3 -m pynotebooklm auth' localmente y actualizar")
+    auth_data = config['auth_data']
+    cookies = auth_data.get('cookies', {})
+    csrf_token = auth_data.get('csrf_token', '')
+    session_id = auth_data.get('session_id', '')
+
+    if not cookies:
+        print("[notebooklm-sync] Auth inválida — no hay cookies en NOTEBOOKLM_AUTH_JSON")
+        print("  Solución: correr 'notebooklm-mcp-auth' localmente y actualizar")
         print("  el secret NOTEBOOKLM_AUTH_JSON en GitHub con el nuevo auth.json")
         return
+
+    client = NotebookLMClient(
+        cookies=cookies,
+        csrf_token=csrf_token,
+        session_id=session_id,
+    )
 
     success = 0
     total = len(config['notebook_ids'])
 
-    async with NotebookLMClient(auth=auth) as client:
-        for subject, notebook_id in config['notebook_ids'].items():
-            raw_url = f"{config['netlify_url']}/raw/{subject}.txt"
-            print(f"\n[{subject}]")
-            ok = await sync_notebook(client.sources, notebook_id, subject, raw_url)
-            if ok:
-                success += 1
+    for subject, notebook_id in config['notebook_ids'].items():
+        raw_url = f"{config['netlify_url']}/raw/{subject}.txt"
+        print(f"\n[{subject}]")
+        ok = sync_notebook(client, notebook_id, subject, raw_url)
+        if ok:
+            success += 1
 
     print(f"\n[notebooklm-sync] Completado — {success}/{total} notebooks sincronizados")
 
@@ -131,4 +140,4 @@ async def run(config: dict) -> None:
 if __name__ == '__main__':
     cfg = load_config()
     if cfg:
-        asyncio.run(run(cfg))
+        run(cfg)

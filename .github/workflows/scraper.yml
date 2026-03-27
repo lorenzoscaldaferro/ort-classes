@@ -21,7 +21,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests beautifulsoup4 openai pynotebooklm
+        run: pip install requests beautifulsoup4 openai notebooklm-mcp
 
       - name: Run scraper
         env:
@@ -41,10 +41,6 @@ jobs:
           git add transcripts/ transcripts_index.json ui/public/raw/
           git diff --staged --quiet || git commit -m "chore: new transcripts $(date '+%Y-%m-%d')"
           git push
-
-      - name: Install Playwright (for NotebookLM sync)
-        if: ${{ secrets.NOTEBOOKLM_AUTH_JSON != '' }}
-        run: python -m playwright install chromium --with-deps
 
       - name: Sync sources in NotebookLM
         env:
