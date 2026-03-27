@@ -216,7 +216,8 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
     from playwright.sync_api import sync_playwright
 
     showcase_id = showcase_url.rstrip('/').split('/')[-1]
-    videos = []          # [{uri, name, release_time, ...}]
+    seen_ids = set()
+    videos = []          # [{uri, name, release_time, ...}], deduplicated
     player_configs = {}  # vid_id -> player config JSON (captured via response listener)
 
     def on_response(response):
@@ -226,13 +227,15 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                     and response.status == 200):
                 data = response.json()
                 for item in data.get('data', []):
-                    videos.append(item)
+                    uri = item.get('uri', '')
+                    v = uri.split('/')[-1] if uri else str(item.get('id', ''))
+                    if v and v.isdigit() and v not in seen_ids:
+                        seen_ids.add(v)
+                        videos.append(item)
             elif ('player.vimeo.com/video/' in url and '/config' in url
                   and response.status == 200):
-                # Config URL format: player.vimeo.com/video/{id}/config?...
-                vid_id = url.split('/video/')[1].split('/')[0]
-                config = response.json()
-                player_configs[vid_id] = config
+                v = url.split('/video/')[1].split('/')[0]
+                player_configs[v] = response.json()
         except Exception:
             pass
 
@@ -265,7 +268,9 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
         else:
             print("[PW] No password prompt — may already be authenticated")
 
-        print(f"[PW] Found {len(videos)} video(s) from API interception")
+        # Extra wait for the authenticated video list API call to complete
+        page.wait_for_timeout(3000)
+        print(f"[PW] Found {len(videos)} unique video(s) from API interception")
 
         if not videos:
             print("[-] No videos found via Playwright — check password or showcase URL")
@@ -304,24 +309,46 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                 print(f"    [~] Skipping (already exists)")
                 continue
 
-            # Navigate to video page and wait deterministically for the player config XHR.
-            # page.expect_response() resolves the moment the matching response arrives,
-            # so we don't burn 12s of fixed polling — the run finishes in <5 min total.
-            video_url = f"https://vimeo.com/showcase/{showcase_id}/video/{vid_id}"
-            config = None
-            try:
-                with page.expect_response(
-                    lambda r, v=vid_id: f'/video/{v}/config' in r.url and r.status == 200,
-                    timeout=30000,
-                ) as resp_info:
-                    page.goto(video_url, wait_until='commit', timeout=30000)
+            # --- Config extraction: 3-layer fallback ---
+            # Layer 1: already captured by response listener during showcase load
+            config = player_configs.get(vid_id)
+
+            if not config:
+                # Layer 2: navigate to video page; wait for DOM + JS execution.
+                # The response listener will capture the /config XHR if the player
+                # loads in the main frame. If not (e.g. sandboxed iframe), Layer 3 handles it.
+                video_url = f"https://vimeo.com/showcase/{showcase_id}/video/{vid_id}"
                 try:
-                    config = resp_info.value.json()
+                    page.goto(video_url, wait_until='domcontentloaded', timeout=30000)
                 except Exception:
-                    config = None
-            except Exception as e:
-                print(f"    [!] Timeout waiting for player config: {e}")
-                config = None
+                    pass
+                page.wait_for_timeout(5000)
+                config = player_configs.get(vid_id)
+
+            if not config:
+                # Layer 3: read clip_page_config JS global, then fetch the config_url
+                # it contains. This works when Vimeo embeds config data in the page's
+                # Next.js/React globals instead of making a visible XHR.
+                try:
+                    raw = page.evaluate("""() => {
+                        const cc = window.vimeo && window.vimeo.clip_page_config;
+                        if (cc) return cc;
+                        const nd = window.__NEXT_DATA__;
+                        if (nd) {
+                            const pp = nd.props && nd.props.pageProps;
+                            if (pp && pp.clipPageConfig) return pp.clipPageConfig;
+                        }
+                        return null;
+                    }""")
+                    if raw:
+                        config_url = (raw.get('player') or {}).get('config_url')
+                        if config_url:
+                            print(f"    [PW] Fetching config from JS global...")
+                            r = requests.get(config_url, timeout=20)
+                            if r.status_code == 200:
+                                config = r.json()
+                except Exception as e:
+                    print(f"    [!] JS global read failed: {e}")
 
             if not config:
                 print(f"    [!] No player config captured — skipping")
