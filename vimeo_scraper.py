@@ -217,7 +217,7 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
 
     showcase_id = showcase_url.rstrip('/').split('/')[-1]
     videos = []          # [{uri, name, release_time, ...}]
-    player_configs = {}  # vid_id -> player config JSON
+    player_configs = {}  # vid_id -> player config JSON (captured via response listener)
 
     def on_response(response):
         url = response.url
@@ -229,6 +229,7 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                     videos.append(item)
             elif ('player.vimeo.com/video/' in url and '/config' in url
                   and response.status == 200):
+                # Config URL format: player.vimeo.com/video/{id}/config?...
                 vid_id = url.split('/video/')[1].split('/')[0]
                 config = response.json()
                 player_configs[vid_id] = config
@@ -303,26 +304,25 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                 print(f"    [~] Skipping (already exists)")
                 continue
 
-            # Fetch player config via JS eval inside the authenticated browser context.
-            # This avoids page navigation (slow/timeout-prone) and uses the session
-            # cookies already obtained from showcase auth.
+            # Navigate to video page — the browser JS loads the player, which triggers
+            # a signed request to player.vimeo.com/video/{id}/config (captured above).
+            # Use 'commit' so we don't wait for full page render, just the HTTP response.
+            video_url = f"https://vimeo.com/showcase/{showcase_id}/video/{vid_id}"
             try:
-                config = page.evaluate(f"""
-                    async () => {{
-                        const r = await fetch(
-                            'https://player.vimeo.com/video/{vid_id}/config',
-                            {{credentials: 'include'}}
-                        );
-                        if (!r.ok) return null;
-                        return r.json();
-                    }}
-                """)
-            except Exception as e:
-                print(f"    [!] player config fetch error: {e}")
-                config = None
+                page.goto(video_url, wait_until='commit', timeout=20000)
+            except Exception:
+                pass  # timeout OK — player config may still arrive via XHR
+
+            # Poll for the player config (arrives when JS loads the video player)
+            config = None
+            for _ in range(12):
+                config = player_configs.get(vid_id)
+                if config:
+                    break
+                page.wait_for_timeout(1000)
 
             if not config:
-                print(f"    [!] No player config — skipping")
+                print(f"    [!] No player config captured — skipping")
                 continue
 
             text_tracks = config.get('request', {}).get('text_tracks', [])
