@@ -208,10 +208,167 @@ def extract_text_tracks(player_config, subject_name, semester):
 
 
 # ---------------------------------------------------------------------------
-# Showcase scraping
+# Showcase scraping — Playwright (primary)
+# ---------------------------------------------------------------------------
+
+def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
+    """Use Playwright to authenticate, intercept video list + player configs, download VTTs."""
+    from playwright.sync_api import sync_playwright
+
+    showcase_id = showcase_url.rstrip('/').split('/')[-1]
+    videos = []          # [{uri, name, release_time, ...}]
+    player_configs = {}  # vid_id -> player config JSON
+
+    def on_response(response):
+        url = response.url
+        try:
+            if ('api.vimeo.com/albums' in url and 'videos' in url
+                    and response.status == 200):
+                data = response.json()
+                for item in data.get('data', []):
+                    videos.append(item)
+            elif ('player.vimeo.com/video/' in url and '/config' in url
+                  and response.status == 200):
+                vid_id = url.split('/video/')[1].split('/')[0]
+                config = response.json()
+                player_configs[vid_id] = config
+        except Exception:
+            pass
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            user_agent=(
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                'Chrome/122.0.0.0 Safari/537.36'
+            )
+        )
+        page = context.new_page()
+        page.on('response', on_response)
+
+        print(f"[PW] Loading showcase: {showcase_url}")
+        try:
+            page.goto(showcase_url, wait_until='domcontentloaded', timeout=60000)
+        except Exception as e:
+            print(f"[PW] Navigation warning: {e}")
+        page.wait_for_timeout(3000)
+
+        # Authenticate with password
+        password_input = page.query_selector('input[type="password"]')
+        if password_input:
+            print("[PW] Entering password...")
+            password_input.fill(password)
+            page.keyboard.press('Enter')
+            page.wait_for_timeout(6000)
+        else:
+            print("[PW] No password prompt — may already be authenticated")
+
+        print(f"[PW] Found {len(videos)} video(s) from API interception")
+
+        if not videos:
+            print("[-] No videos found via Playwright — check password or showcase URL")
+            browser.close()
+            return
+
+        for video_data in videos:
+            uri = video_data.get('uri', '')
+            vid_id = uri.split('/')[-1] if uri else str(video_data.get('id', ''))
+            if not vid_id or not vid_id.isdigit():
+                continue
+
+            vid_title = video_data.get('name', f'video_{vid_id}')
+            upload_date = (
+                video_data.get('release_time')
+                or video_data.get('created_time', '')
+            )
+
+            print(f"\n[PW] Processing: {vid_title} (ID: {vid_id})")
+
+            # Quick skip-check before navigating
+            date_str_check = datetime.now().strftime('%d-%m-%Y')
+            if upload_date:
+                try:
+                    dt = datetime.strptime(upload_date[:10], '%Y-%m-%d')
+                    date_str_check = dt.strftime('%d-%m-%Y')
+                except ValueError:
+                    pass
+
+            safe_title = re.sub(r'[<>:"/\\|?*]', '', str(vid_title))
+            filepath = os.path.join(
+                BASE_DIR, 'transcripts', f'semestre_{semester}',
+                subject_name, f"{date_str_check} - {safe_title}.md"
+            )
+            if os.path.exists(filepath):
+                print(f"    [~] Skipping (already exists)")
+                continue
+
+            # Navigate to video page — triggers player config request
+            video_url = f"https://vimeo.com/showcase/{showcase_id}/video/{vid_id}"
+            try:
+                page.goto(video_url, wait_until='domcontentloaded', timeout=60000)
+            except Exception as e:
+                print(f"    [!] Navigation error: {e}")
+                continue
+            page.wait_for_timeout(5000)
+
+            config = player_configs.get(vid_id)
+            if not config:
+                page.wait_for_timeout(3000)
+                config = player_configs.get(vid_id)
+
+            if not config:
+                print(f"    [!] No player config captured — skipping")
+                continue
+
+            text_tracks = config.get('request', {}).get('text_tracks', [])
+            if not text_tracks:
+                print(f"    [-] No text tracks for this video")
+                continue
+
+            track = next(
+                (t for t in text_tracks if t.get('kind') == 'captions'),
+                text_tracks[0]
+            )
+            lang = track.get('language', 'unknown')
+            vtt_url = track.get('url', '')
+            if vtt_url.startswith('/'):
+                vtt_url = f"https://player.vimeo.com{vtt_url}"
+
+            print(f"    Downloading VTT [{lang}]...")
+            resp = requests.get(vtt_url, timeout=30)
+            if resp.status_code != 200:
+                print(f"    [!] VTT download failed: {resp.status_code}")
+                continue
+
+            text = vtt_to_text(resp.text)
+            saved, date_str_final = save_transcript(
+                subject_name, semester, vid_id, vid_title, upload_date, text
+            )
+            if saved:
+                ingest_to_pinecone(text, str(vid_id), {
+                    'subject': subject_name,
+                    'semester': str(semester),
+                    'title': str(vid_title),
+                    'date': date_str_final,
+                })
+
+        browser.close()
+
+
+# ---------------------------------------------------------------------------
+# Showcase scraping — HTTP fallback
 # ---------------------------------------------------------------------------
 
 def extract_vtt_from_showcase(showcase_url, password, subject_name, semester):
+    """Try Playwright first (handles Cloudflare/CSR); fall back to HTTP."""
+    try:
+        import playwright  # noqa: F401
+        _extract_vtt_playwright(showcase_url, password, subject_name, semester)
+        return
+    except ImportError:
+        print("[!] Playwright not installed — using HTTP fallback")
+
     session = requests.Session()
     session.headers.update({
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
