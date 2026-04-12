@@ -4,15 +4,15 @@ Sincroniza las fuentes URL de NotebookLM después de cada scrape.
 
 Para cada materia configurada, este script:
 1. Lista las fuentes existentes en el notebook
-2. Elimina la fuente que apunta a nuestro archivo /raw/ en Netlify
-3. Re-agrega la misma URL — NotebookLM re-fetcha el contenido actualizado
+2. Elimina la fuente que apunta a nuestro archivo /raw/ (cualquier host)
+3. Re-agrega la URL actualizada — NotebookLM re-fetcha el contenido
 
 Requiere estas env vars (GitHub Secrets):
   NOTEBOOKLM_AUTH_JSON    — Contenido JSON de ~/.notebooklm-mcp/auth.json
                             (generado localmente con: notebooklm-mcp-auth)
   NOTEBOOKLM_NOTEBOOK_IDS — JSON map: {"subject_name": "notebook_id", ...}
-  NETLIFY_URL             — URL base del sitio Netlify (sin trailing slash)
-                            Ej: https://ort-classes.netlify.app
+  NETLIFY_URL             — URL base del sitio (sin trailing slash)
+                            Ej: https://ort-classes.vercel.app
 
 Si alguna de estas env vars no está seteada, el script sale limpiamente
 sin marcar el workflow como fallido.
@@ -35,12 +35,12 @@ def load_config() -> dict | None:
     """Carga y valida la configuración desde env vars. Retorna None si faltan vars."""
     auth_json = os.environ.get('NOTEBOOKLM_AUTH_JSON', '').strip()
     notebook_ids_raw = os.environ.get('NOTEBOOKLM_NOTEBOOK_IDS', '').strip()
-    netlify_url = os.environ.get('NETLIFY_URL', '').strip().rstrip('/')
+    site_url = os.environ.get('NETLIFY_URL', '').strip().rstrip('/')
 
     missing = [k for k, v in {
         'NOTEBOOKLM_AUTH_JSON': auth_json,
         'NOTEBOOKLM_NOTEBOOK_IDS': notebook_ids_raw,
-        'NETLIFY_URL': netlify_url,
+        'NETLIFY_URL': site_url,
     }.items() if not v]
 
     if missing:
@@ -62,7 +62,7 @@ def load_config() -> dict | None:
     return {
         'auth_data': auth_data,
         'notebook_ids': notebook_ids,
-        'netlify_url': netlify_url,
+        'site_url': site_url,
     }
 
 
@@ -75,10 +75,10 @@ def sync_notebook(client, notebook_id: str, subject: str, raw_url: str) -> bool:
         # 1. Listar fuentes existentes con sus URLs
         existing = client.get_notebook_sources_with_types(notebook_id)
 
-        # 2. Borrar fuentes que apuntan a nuestros raw files
+        # 2. Borrar fuentes que apuntan a nuestros raw files (cualquier host)
         for source in existing:
             source_url = source.get('url') or ''
-            if f'/raw/{subject}' in source_url or (subject in source_url and 'netlify' in source_url):
+            if f'/raw/{subject}' in source_url:
                 print(f"  [-] Borrando fuente antigua: {source_url or source['id']}")
                 client.delete_source(source['id'])
 
@@ -128,7 +128,7 @@ def run(config: dict) -> None:
     total = len(config['notebook_ids'])
 
     for subject, notebook_id in config['notebook_ids'].items():
-        raw_url = f"{config['netlify_url']}/raw/{subject}.txt"
+        raw_url = f"{config['site_url']}/raw/{subject}.txt"
         print(f"\n[{subject}]")
         ok = sync_notebook(client, notebook_id, subject, raw_url)
         if ok:
