@@ -21,7 +21,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests beautifulsoup4 openai "notebooklm-mcp>=2.0.0" playwright
+        run: pip install requests beautifulsoup4 openai "notebooklm-mcp==0.1.15" playwright
 
       - name: Install Chromium for Playwright
         run: python -m playwright install chromium --with-deps
