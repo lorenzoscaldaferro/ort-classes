@@ -70,9 +70,20 @@ gh run view --job=68909810643 --repo lorenzoscaldaferro/ort-classes
 ### Pendiente
 - Configurar `TELEGRAM_BOT_TOKEN` y `TELEGRAM_CHAT_ID` como GitHub Secrets (el step de notificación de fallos ya está en `scraper.yml`, solo faltan los secrets).
 
+## [Unreleased] - 2026-04-14 (Vercel Migration & NotebookLM Sync Issues)
+
+### Fixed
+- **Vercel Migration**: The pipeline successfully migrated from Netlify to Vercel. `NETLIFY_URL` secrets have been swapped to `VERCEL_URL` (`https://ort-classes.vercel.app`).
+- **Dependencies Action**: Action `scraper.yml` now properly pins and quotes `"notebooklm-mcp>=2.0.0"` to avoid bash syntax errors during installation that caused the NotebookLM sync script to fail silently.
+- **NotebookLM Cookies**: Updated `NOTEBOOKLM_AUTH_JSON` with fresh cookies.
+
+### Pending
+- **NotebookLM Sources Not Updating**: Despite `notebooklm_sync.py` running successfully in the pipeline without importing errors, NotebookLM notebooks are still reporting the old Netlify URLs as their data sources (e.g., `https://ort-classes.netlify.app/raw/economia_y_gestion.txt`). Claude Code needs to debug `notebooklm_sync.py` to ensure it successfully discovers and deletes the old Netlify URLs and effectively replaces them with the new Vercel URLs.
+
 ---
 
-## [Unreleased] - 2026-03-27 (NotebookLM sync fix — notebooklm-mcp)
+
+## [Fixed] - 2026-04-12 (NotebookLM sync fix — notebooklm-mcp)
 
 ### Fixed
 - **NotebookLM sync auth**: `pynotebooklm auth login` was blocked by Google's automated browser detection (Playwright Chromium triggers "No puedes acceder"). Replaced pynotebooklm entirely with `notebooklm-mcp`, which uses `notebooklm-mcp-auth` (real Chrome via CDP — not detected as a bot).
