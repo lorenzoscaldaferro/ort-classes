@@ -70,15 +70,25 @@ gh run view --job=68909810643 --repo lorenzoscaldaferro/ort-classes
 ### Pendiente
 - Configurar `TELEGRAM_BOT_TOKEN` y `TELEGRAM_CHAT_ID` como GitHub Secrets (el step de notificación de fallos ya está en `scraper.yml`, solo faltan los secrets).
 
-## [Unreleased] - 2026-04-14 (Vercel Migration & NotebookLM Sync Issues)
+## [Fixed] - 2026-04-14 (Vercel Migration — NotebookLM sync completamente funcional)
 
 ### Fixed
-- **Vercel Migration**: The pipeline successfully migrated from Netlify to Vercel. `NETLIFY_URL` secrets have been swapped to `VERCEL_URL` (`https://ort-classes.vercel.app`).
-- **Dependencies Action**: Action `scraper.yml` now properly pins and quotes `"notebooklm-mcp>=2.0.0"` to avoid bash syntax errors during installation that caused the NotebookLM sync script to fail silently.
-- **NotebookLM Cookies**: Updated `NOTEBOOKLM_AUTH_JSON` with fresh cookies.
+- **Vercel Migration**: Pipeline migrado de Netlify a Vercel. `VERCEL_URL` = `https://ort-classes.vercel.app`.
+- **NotebookLM sync — 3 bugs encadenados resueltos**:
+  1. `notebooklm-mcp>=2.0.0` en scraper.yml instalaba la v2.0.11 de PyPI, un proyecto completamente diferente al cliente local (v0.1.15) que tiene `NotebookLMClient`. El import fallaba silenciosamente → el sync nunca corría. Fix: vendorear `notebooklm_mcp/` (api_client.py, constants.py, __init__.py) directamente en el repo y reemplazar la dep por `httpx`.
+  2. El cliente usaba `bl` (build label del frontend de NotebookLM) hardcodeado de enero 2026 → Google respondía 400 Bad Request. Fix: extraer `bl` dinámicamente de la página HTML al inicializar el cliente via regex en `_refresh_auth_tokens()`.
+  3. El cliente usaba `csrf_token` y `session_id` del auth.json cacheado (de marzo 2026) → no hacía page fetch fresco → `bl` desactualizado nunca se corregía. Fix: inicializar `NotebookLMClient(cookies=cookies)` sin pasar csrf/session para forzar el page fetch que extrae los valores actuales.
+- **notebooklm_sync.py — logging mejorado**: imprime fuentes encontradas (id, type, url, title) y advertencia explícita si ninguna matchea.
 
-### Pending
-- **NotebookLM Sources Not Updating**: Despite `notebooklm_sync.py` running successfully in the pipeline without importing errors, NotebookLM notebooks are still reporting the old Netlify URLs as their data sources (e.g., `https://ort-classes.netlify.app/raw/economia_y_gestion.txt`). Claude Code needs to debug `notebooklm_sync.py` to ensure it successfully discovers and deletes the old Netlify URLs and effectively replaces them with the new Vercel URLs.
+### Resultado verificado
+Run `24402584005` — **5/5 notebooks sincronizados**:
+```
+[-] Borrando fuente antigua: url='https://ort-classes.netlify.app/raw/business_intelligence.txt'
+[+] Agregando: https://ort-classes.vercel.app/raw/business_intelligence.txt  [✓]
+[-] Borrando fuente antigua: url='https://ort-classes.netlify.app/raw/economia_y_gestion.txt'
+... (repite para las 5 materias)
+Completado — 5/5 notebooks sincronizados
+```
 
 ---
 
