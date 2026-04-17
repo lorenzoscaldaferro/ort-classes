@@ -7,3 +7,4 @@ cron.log
 node_modules/
 ui/dist/
 ui/node_modules/
+run_summary.json

@@ -681,9 +681,17 @@ def generate_transcript_index():
                 sub_path = os.path.join(s_path, subject_dir)
                 if not os.path.isdir(sub_path):
                     continue
+                def _date_key_desc(fname):
+                    m = re.match(r'(\d{2})-(\d{2})-(\d{4})', fname)
+                    if m:
+                        day, month, year = m.groups()
+                        return (year, month, day)
+                    return ('0000', '00', '00')
+
                 files = sorted(
                     [f for f in os.listdir(sub_path) if f.endswith('.md')],
-                    reverse=True,
+                    key=_date_key_desc,
+                    reverse=True,  # más reciente primero en la UI
                 )
                 label = SUBJECT_LABELS.get(
                     subject_dir,
