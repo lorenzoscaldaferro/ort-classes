@@ -254,6 +254,87 @@ npm run build  # copia transcripts/ a public/ y compila con Vite
 
 ---
 
+## Migración de semestre (hacer al inicio de cada semestre nuevo)
+
+Cuando empieza un semestre nuevo, hay que actualizar tres GitHub Secrets:
+`SUBJECTS_JSON`, `NOTEBOOKLM_NOTEBOOK_IDS`, y opcionalmente rotar contraseñas.
+Los notebooks y transcripts del semestre anterior quedan intactos — simplemente
+dejan de actualizarse.
+
+### Paso a paso
+
+**1. Conseguir las nuevas URLs de Vimeo**
+- Entrar a Vimeo y buscar los showcases del nuevo semestre
+- Anotar la URL de cada showcase y la contraseña
+
+**2. Actualizar SUBJECTS_JSON**
+
+> ⚠️ Si una materia tiene el **mismo nombre** que una del semestre anterior (ej: tomás
+> contabilidad de nuevo), poné un sufijo: `contabilidad_y_costos_s6`. Así genera un raw
+> file y un notebook separado, y el de semestre 5 queda intacto y congelado.
+> Si las materias son todas nuevas (nombres distintos), no hace falta sufijo.
+
+```bash
+# Editar localmente y luego subir:
+gh secret set SUBJECTS_JSON --repo lole-sc/ort-classes
+# Pegar el JSON cuando lo pida (ver estructura abajo)
+```
+
+Estructura del JSON (array de materias):
+```json
+[
+  {
+    "name":         "economia_y_gestion",
+    "semester":     6,
+    "showcase_url": "https://vimeo.com/showcase/NUEVO_ID",
+    "password":     "nueva_contraseña"
+  },
+  { "name": "business_intelligence",  "semester": 6, "showcase_url": "...", "password": "..." },
+  { "name": "contabilidad_y_costos",  "semester": 6, "showcase_url": "...", "password": "..." },
+  { "name": "project_management",     "semester": 6, "showcase_url": "...", "password": "..." },
+  { "name": "ecommerce_y_servicios",  "semester": 6, "showcase_url": "...", "password": "..." }
+]
+```
+
+Cambiar `semester` a `6` y las URLs/contraseñas nuevas. El campo `name` controla:
+- La carpeta donde se guardan los transcripts (`transcripts/semestre_6/{name}/`)
+- El nombre del raw file (`ui/public/raw/{name}.txt`)
+- La URL que usa NotebookLM
+
+**3. Crear 5 notebooks nuevos en NotebookLM**
+- Ir a [notebooklm.google.com](https://notebooklm.google.com)
+- Crear un notebook por materia nueva
+- Copiar los IDs de cada notebook (están en la URL: `notebooklm.google.com/notebooklm.google.com/note/NOTEBOOK_ID`)
+
+**4. Actualizar NOTEBOOKLM_NOTEBOOK_IDS**
+```bash
+gh secret set NOTEBOOKLM_NOTEBOOK_IDS --repo lole-sc/ort-classes
+# Pegar el JSON con los nuevos IDs:
+# { "economia_y_gestion": "ID_NUEVO", "business_intelligence": "ID_NUEVO", ... }
+```
+
+**5. Triggerear el scraper manualmente**
+GitHub → repo `ort-classes` → Actions → "Vimeo Scraper" → Run workflow.
+
+El primer run del semestre va a:
+- Crear las carpetas `transcripts/semestre_6/{materia}/`
+- Descargar todas las clases ya grabadas
+- Generar los raw files nuevos
+- Crear las fuentes URL en los notebooks nuevos de NotebookLM
+- Mandar Telegram con el resumen
+
+**6. Verificar en Vercel**
+`https://ort-classes.vercel.app` → debería aparecer "Semestre 6" en la UI con todas
+las clases descargadas.
+
+### Qué NO hace falta hacer
+- Tocar el código — el pipeline funciona igual para cualquier semestre
+- Borrar los notebooks de semestre 5 — quedan como archivo de consulta
+- Borrar los raw files viejos — si los nombres son distintos coexisten; si son iguales
+  el nuevo semestre los sobreescribe (y el notebook viejo deja de actualizarse)
+
+---
+
 ## config.json — estructura
 
 ```json
