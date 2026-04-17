@@ -2,6 +2,24 @@
 
 All notable changes to the ORT Vimeo Scraper & RAG Knowledge Base project will be documented in this file.
 
+## [Fixed] - 2026-04-17 (Orden cronológico en UI + limpieza gitignore)
+
+### Qué estaba roto
+`generate_transcript_index()` en `vimeo_scraper.py` usaba `sorted(..., reverse=True)` sobre
+nombres `DD-MM-YYYY`. El orden alfabético inverso ponía "26-03" como "más reciente" que "16-04"
+— la UI mostraba clases de marzo antes que las de abril.
+
+### Fix aplicado
+Misma solución que `generate_raw_files.py`: key `(YYYY, MM, DD)` con `reverse=True` para
+orden cronológico descendente (más reciente primero). `transcripts_index.json` regenerado y
+commiteado para que Vercel lo aplique inmediatamente.
+
+### También
+`run_summary.json` agregado a `.gitignore` — este archivo es generado por el scraper en cada
+run para la notificación Telegram y no debe commitearse al repo.
+
+---
+
 ## [Feat] - 2026-04-17 (Confiabilidad y observabilidad del pipeline)
 
 ### Qué se agregó
