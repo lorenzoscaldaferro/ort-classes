@@ -53,9 +53,46 @@ jobs:
           VERCEL_URL: ${{ secrets.VERCEL_URL }}
         run: python notebooklm_sync.py
 
+      - name: Notify on success
+        if: success()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python - <<'EOF'
+          import json, os, urllib.request, urllib.parse
+
+          token = os.environ.get('TELEGRAM_BOT_TOKEN', '')
+          chat_id = os.environ.get('TELEGRAM_CHAT_ID', '')
+          if not token or not chat_id:
+              print("[notify] Telegram secrets not configured — skipping")
+              raise SystemExit(0)
+
+          try:
+              with open('run_summary.json') as f:
+                  summary = json.load(f)
+              new_by_subject = summary.get('new_by_subject', {})
+              total_new = summary.get('total_new', 0)
+              date = summary.get('date', 'hoy')
+              if total_new:
+                  parts = ', '.join(f"{s} +{n}" for s, n in new_by_subject.items() if n > 0)
+                  body = f"Nuevas: {parts}"
+              else:
+                  body = "Sin clases nuevas hoy"
+              text = f"ORT Scraper - {date}\n{body}"
+          except Exception as e:
+              text = f"ORT Scraper completado ({e})"
+
+          data = urllib.parse.urlencode({'chat_id': chat_id, 'text': text}).encode()
+          urllib.request.urlopen(
+              f"https://api.telegram.org/bot{token}/sendMessage", data
+          )
+          print(f"[notify] Sent: {text}")
+          EOF
+
       - name: Notify on failure
         if: failure()
         run: |
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-            -d text="⚠️ ORT Scraper FALLÓ — $(date '+%Y-%m-%d %H:%M UTC'). Revisá GitHub Actions."
+            -d text="ORT Scraper FALLO — $(date '+%Y-%m-%d %H:%M UTC'). Revisa GitHub Actions."

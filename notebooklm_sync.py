@@ -28,6 +28,7 @@ el secret NOTEBOOKLM_AUTH_JSON cuando fallen.
 
 import json
 import os
+import sys
 from pathlib import Path
 
 
@@ -44,6 +45,9 @@ def load_config() -> dict | None:
     }.items() if not v]
 
     if missing:
+        if os.environ.get('GITHUB_ACTIONS'):
+            print(f"[notebooklm-sync] ERROR — env vars requeridas no configuradas en CI: {', '.join(missing)}")
+            sys.exit(1)
         print(f"[notebooklm-sync] Skipping — env vars no configuradas: {', '.join(missing)}")
         return None
 
@@ -51,13 +55,13 @@ def load_config() -> dict | None:
         auth_data = json.loads(auth_json)
     except json.JSONDecodeError as e:
         print(f"[notebooklm-sync] NOTEBOOKLM_AUTH_JSON JSON inválido: {e}")
-        return None
+        sys.exit(1)
 
     try:
         notebook_ids = json.loads(notebook_ids_raw)
     except json.JSONDecodeError as e:
         print(f"[notebooklm-sync] NOTEBOOKLM_NOTEBOOK_IDS JSON inválido: {e}")
-        return None
+        sys.exit(1)
 
     return {
         'auth_data': auth_data,
@@ -135,7 +139,7 @@ def run(config: dict) -> None:
         print("[notebooklm-sync] Auth inválida — no hay cookies en NOTEBOOKLM_AUTH_JSON")
         print("  Solución: correr 'notebooklm-mcp-auth' localmente y actualizar")
         print("  el secret NOTEBOOKLM_AUTH_JSON en GitHub con el nuevo auth.json")
-        return
+        sys.exit(1)
 
     # No pasamos csrf_token ni session_id: el cliente hace un page fetch fresco
     # para extraer el CSRF token actual, session_id, y el build label (bl) del
@@ -153,6 +157,12 @@ def run(config: dict) -> None:
             success += 1
 
     print(f"\n[notebooklm-sync] Completado — {success}/{total} notebooks sincronizados")
+    if success < total:
+        failed = total - success
+        print(f"[notebooklm-sync] ERROR — {failed} notebook(s) fallaron.")
+        print("  Si el error es de autenticación, correr 'notebooklm-mcp-auth' y actualizar")
+        print("  el secret NOTEBOOKLM_AUTH_JSON en GitHub con el nuevo auth.json")
+        sys.exit(1)
 
 
 if __name__ == '__main__':

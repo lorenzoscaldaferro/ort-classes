@@ -2,6 +2,7 @@ import requests
 import re
 import json
 import os
+import time
 from datetime import datetime, timezone
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
@@ -24,6 +25,30 @@ SUBJECT_LABELS = {
 # but storing ~3000 chars per chunk keeps metadata lean and retrieval precise.
 CHUNK_SIZE = 3000
 CHUNK_OVERLAP = 300
+
+# Tracks new transcripts saved this run: {subject_name: count}
+_run_summary: dict = {}
+
+
+# ---------------------------------------------------------------------------
+# HTTP helpers
+# ---------------------------------------------------------------------------
+
+def _http_get_retry(url, retries=3, backoff=2, **kwargs):
+    """GET with exponential backoff retry on network errors or 5xx responses."""
+    resp = None
+    for attempt in range(retries):
+        try:
+            resp = requests.get(url, **kwargs)
+            if resp.status_code < 500:
+                return resp
+            print(f"    [!] HTTP {resp.status_code} — attempt {attempt + 1}/{retries}")
+        except requests.RequestException as e:
+            print(f"    [!] Network error — attempt {attempt + 1}/{retries}: {e}")
+            resp = None
+        if attempt < retries - 1:
+            time.sleep(backoff ** attempt)
+    return resp  # None or last 5xx response — caller must check
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +184,7 @@ def save_transcript(subject_name, semester, video_id, video_title, upload_date, 
         f.write(header + text)
 
     print(f"    [+] Saved: {filename}")
+    _run_summary[subject_name] = _run_summary.get(subject_name, 0) + 1
     return True, date_str
 
 
@@ -356,7 +382,7 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                 # config endpoint. We bypass the browser for this step (much faster).
                 try:
                     config_url = f"https://player.vimeo.com/video/{vid_id}/config"
-                    r = requests.get(
+                    r = _http_get_retry(
                         config_url,
                         cookies=vimeo_cookies,
                         headers={
@@ -370,7 +396,7 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                         },
                         timeout=20,
                     )
-                    if r.status_code == 200:
+                    if r is not None and r.status_code == 200:
                         candidate = r.json()
                         # Reject if text_tracks is empty (unauthenticated response)
                         if candidate.get('request', {}).get('text_tracks'):
@@ -414,8 +440,8 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                             if raw:
                                 config_url2 = (raw.get('player') or {}).get('config_url')
                                 if config_url2:
-                                    rr = requests.get(config_url2, timeout=20)
-                                    if rr.status_code == 200:
+                                    rr = _http_get_retry(config_url2, timeout=20)
+                                    if rr is not None and rr.status_code == 200:
                                         config = rr.json()
                     else:
                         print(f"    [!] No thumbnail found for {vid_id} — DOM hrefs may use different format")
@@ -441,9 +467,9 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                 vtt_url = f"https://player.vimeo.com{vtt_url}"
 
             print(f"    Downloading VTT [{lang}]...")
-            resp = requests.get(vtt_url, timeout=30)
-            if resp.status_code != 200:
-                print(f"    [!] VTT download failed: {resp.status_code}")
+            resp = _http_get_retry(vtt_url, timeout=30)
+            if resp is None or resp.status_code != 200:
+                print(f"    [!] VTT download failed: {getattr(resp, 'status_code', 'network error')}")
                 continue
 
             text = vtt_to_text(resp.text)
@@ -729,4 +755,15 @@ if __name__ == "__main__":
 
     print(f"\n{'='*60}")
     generate_transcript_index()
+
+    # Write run summary for the Telegram notification step
+    summary_path = os.path.join(BASE_DIR, 'run_summary.json')
+    with open(summary_path, 'w', encoding='utf-8') as f:
+        json.dump({
+            'date': datetime.now().strftime('%d/%m/%Y'),
+            'new_by_subject': _run_summary,
+            'total_new': sum(_run_summary.values()),
+        }, f, ensure_ascii=False, indent=2)
+    print(f"[+] run_summary.json: {sum(_run_summary.values())} transcript(s) nuevo(s)")
+
     print("Done.")
