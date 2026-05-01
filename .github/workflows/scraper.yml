@@ -73,12 +73,24 @@ jobs:
                   summary = json.load(f)
               new_by_subject = summary.get('new_by_subject', {})
               total_new = summary.get('total_new', 0)
+              warnings = summary.get('warnings', [])
               date = summary.get('date', 'hoy')
               if total_new:
                   parts = ', '.join(f"{s} +{n}" for s, n in new_by_subject.items() if n > 0)
                   body = f"Nuevas: {parts}"
               else:
                   body = "Sin clases nuevas hoy"
+              if warnings:
+                  reason_labels = {
+                      'no_player_config': 'sin config',
+                      'empty_text_tracks': 'sin captions',
+                      'vtt_download_failed': 'error descarga',
+                  }
+                  warn_lines = []
+                  for w in warnings:
+                      label = reason_labels.get(w.get('reason', ''), w.get('reason', '?'))
+                      warn_lines.append(f"  • {w.get('subject','?')} [{w.get('date','?')}]: {label}")
+                  body += "\n⚠️ Videos sin transcripción:\n" + "\n".join(warn_lines)
               text = f"ORT Scraper - {date}\n{body}"
           except Exception as e:
               text = f"ORT Scraper completado ({e})"

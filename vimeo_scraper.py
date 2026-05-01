@@ -28,6 +28,8 @@ CHUNK_OVERLAP = 300
 
 # Tracks new transcripts saved this run: {subject_name: count}
 _run_summary: dict = {}
+# Tracks videos found but not saved: list of {subject, video_id, title, reason}
+_run_warnings: list = []
 
 
 # ---------------------------------------------------------------------------
@@ -450,11 +452,25 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
 
             if not config:
                 print(f"    [!] No player config captured — skipping")
+                _run_warnings.append({
+                    'subject': subject_name,
+                    'video_id': vid_id,
+                    'title': vid_title,
+                    'date': date_str_check,
+                    'reason': 'no_player_config',
+                })
                 continue
 
             text_tracks = config.get('request', {}).get('text_tracks', [])
             if not text_tracks:
                 print(f"    [-] No text tracks for this video")
+                _run_warnings.append({
+                    'subject': subject_name,
+                    'video_id': vid_id,
+                    'title': vid_title,
+                    'date': date_str_check,
+                    'reason': 'empty_text_tracks',
+                })
                 continue
 
             track = next(
@@ -470,6 +486,13 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
             resp = _http_get_retry(vtt_url, timeout=30)
             if resp is None or resp.status_code != 200:
                 print(f"    [!] VTT download failed: {getattr(resp, 'status_code', 'network error')}")
+                _run_warnings.append({
+                    'subject': subject_name,
+                    'video_id': vid_id,
+                    'title': vid_title,
+                    'date': date_str_check,
+                    'reason': 'vtt_download_failed',
+                })
                 continue
 
             text = vtt_to_text(resp.text)
@@ -771,7 +794,10 @@ if __name__ == "__main__":
             'date': datetime.now().strftime('%d/%m/%Y'),
             'new_by_subject': _run_summary,
             'total_new': sum(_run_summary.values()),
+            'warnings': _run_warnings,
         }, f, ensure_ascii=False, indent=2)
+    if _run_warnings:
+        print(f"[!] {len(_run_warnings)} video(s) con problemas (ver run_summary.json)")
     print(f"[+] run_summary.json: {sum(_run_summary.values())} transcript(s) nuevo(s)")
 
     print("Done.")
