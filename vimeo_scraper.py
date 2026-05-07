@@ -422,15 +422,16 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                                 print(f"    [PW] Config via cookie fetch (Layer 2, attempt {_l2_attempt+1})")
                                 break
                             else:
-                                # Log what keys are present to distinguish "no captions"
-                                # from an auth failure where the whole config is minimal.
                                 req = candidate.get('request', {})
                                 vid_sec = candidate.get('video', {})
+                                top_keys = list(candidate.keys())
                                 print(
                                     f"    [!] Cookie fetch returned empty text_tracks "
                                     f"(attempt {_l2_attempt+1}) — "
+                                    f"top_keys={top_keys} "
                                     f"video.title={vid_sec.get('title','?')!r} "
-                                    f"req.files={'yes' if req.get('files') else 'no'}"
+                                    f"req.files={'yes' if req.get('files') else 'no'} "
+                                    f"link_field={video_data.get('link','MISSING')!r}"
                                 )
                                 if _l2_attempt == 0:
                                     page.wait_for_timeout(4000)
@@ -498,8 +499,11 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                 # videos. Re-navigates to showcase afterwards so Layer 3 still works
                 # for remaining videos.
                 try:
-                    vid_url = f"https://vimeo.com/{vid_id}"
-                    print(f"    [PW] Layer 4: direct navigation to {vid_url}", flush=True)
+                    # Navigate to the video within the showcase context so the
+                    # showcase-password cookie applies (direct /video/{id} URLs may
+                    # be blocked by the video's own privacy settings).
+                    vid_url = f"https://vimeo.com/showcase/{showcase_id}/video/{vid_id}"
+                    print(f"    [PW] Layer 4: showcase video page {vid_url}", flush=True)
                     try:
                         with page.expect_response(
                             lambda r: (
@@ -513,7 +517,7 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                         pass  # timeout or nav error — check player_configs anyway
                     config = player_configs.get(vid_id)
                     if config:
-                        print(f"    [PW] Config via direct navigation (Layer 4)")
+                        print(f"    [PW] Config via showcase video page (Layer 4)")
                     # Return to showcase so subsequent videos can use thumbnail click
                     page.goto(showcase_url, wait_until='domcontentloaded', timeout=30000)
                     page.wait_for_timeout(3000)
