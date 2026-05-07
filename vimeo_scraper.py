@@ -408,7 +408,16 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                                 print(f"    [PW] Config via cookie fetch (Layer 2, attempt {_l2_attempt+1})")
                                 break
                             else:
-                                print(f"    [!] Cookie fetch returned empty text_tracks (attempt {_l2_attempt+1})")
+                                # Log what keys are present to distinguish "no captions"
+                                # from an auth failure where the whole config is minimal.
+                                req = candidate.get('request', {})
+                                vid_sec = candidate.get('video', {})
+                                print(
+                                    f"    [!] Cookie fetch returned empty text_tracks "
+                                    f"(attempt {_l2_attempt+1}) — "
+                                    f"video.title={vid_sec.get('title','?')!r} "
+                                    f"req.files={'yes' if req.get('files') else 'no'}"
+                                )
                                 if _l2_attempt == 0:
                                     page.wait_for_timeout(4000)
                         else:
