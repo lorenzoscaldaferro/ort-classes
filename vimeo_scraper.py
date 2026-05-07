@@ -430,7 +430,8 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                                     f"(attempt {_l2_attempt+1}) — "
                                     f"top_keys={top_keys} "
                                     f"video.title={vid_sec.get('title','?')!r} "
-                                    f"req.files={'yes' if req.get('files') else 'no'} "
+                                    f"video.keys={list(vid_sec.keys())} "
+                                    f"req.keys={list(req.keys())} "
                                     f"link_field={video_data.get('link','MISSING')!r}"
                                 )
                                 if _l2_attempt == 0:
