@@ -344,6 +344,17 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                 or video_data.get('created_time', '')
             )
 
+            # Some Vimeo videos use a privacy hash: vimeo.com/{id}/{hash}.
+            # Without the hash the player config endpoint returns an empty response.
+            # Extract it from the `link` field, e.g. "https://vimeo.com/123/abc456".
+            vid_hash = None
+            link_field = video_data.get('link', '')
+            link_parts = link_field.rstrip('/').split('/')
+            if len(link_parts) >= 2 and link_parts[-2] == vid_id:
+                candidate_hash = link_parts[-1]
+                if candidate_hash and candidate_hash != vid_id and not candidate_hash.startswith('?'):
+                    vid_hash = candidate_hash
+
             # Vimeo ORT titles embed the lecture date: "FACS-... | DD-MM-YYYY"
             # Extract the date, convert to YYYY-MM-DD (for save_transcript parser),
             # and strip the " | DD-MM-YYYY" suffix from the title.
@@ -354,7 +365,8 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                     upload_date = f"{year}-{month}-{day}"
                 vid_title = vid_title[:date_in_title.start()].strip()
 
-            print(f"\n[PW] Processing: {vid_title} (ID: {vid_id})", flush=True)
+            hash_info = f" hash={vid_hash}" if vid_hash else ""
+            print(f"\n[PW] Processing: {vid_title} (ID: {vid_id}{hash_info})", flush=True)
 
             # Quick skip-check before navigating
             date_str_check = datetime.now().strftime('%d-%m-%Y')
@@ -387,6 +399,8 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                 for _l2_attempt in range(2):
                     try:
                         config_url = f"https://player.vimeo.com/video/{vid_id}/config"
+                        if vid_hash:
+                            config_url += f"?h={vid_hash}"
                         r = _http_get_retry(
                             config_url,
                             cookies=vimeo_cookies,
