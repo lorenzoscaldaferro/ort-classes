@@ -382,34 +382,41 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                 # Layer 2: direct HTTP fetch using Playwright session cookies.
                 # After showcase auth, Vimeo sets cookies that authorize the player
                 # config endpoint. We bypass the browser for this step (much faster).
-                try:
-                    config_url = f"https://player.vimeo.com/video/{vid_id}/config"
-                    r = _http_get_retry(
-                        config_url,
-                        cookies=vimeo_cookies,
-                        headers={
-                            'Referer': showcase_url,
-                            'Origin': 'https://vimeo.com',
-                            'User-Agent': (
-                                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
-                                'AppleWebKit/537.36 (KHTML, like Gecko) '
-                                'Chrome/122.0.0.0 Safari/537.36'
-                            ),
-                        },
-                        timeout=20,
-                    )
-                    if r is not None and r.status_code == 200:
-                        candidate = r.json()
-                        # Reject if text_tracks is empty (unauthenticated response)
-                        if candidate.get('request', {}).get('text_tracks'):
-                            config = candidate
-                            print(f"    [PW] Config via cookie fetch (Layer 2)")
+                # Retried once with a delay: newly-uploaded videos may need a few
+                # seconds before Vimeo's CDN makes text_tracks available.
+                for _l2_attempt in range(2):
+                    try:
+                        config_url = f"https://player.vimeo.com/video/{vid_id}/config"
+                        r = _http_get_retry(
+                            config_url,
+                            cookies=vimeo_cookies,
+                            headers={
+                                'Referer': showcase_url,
+                                'Origin': 'https://vimeo.com',
+                                'User-Agent': (
+                                    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+                                    'AppleWebKit/537.36 (KHTML, like Gecko) '
+                                    'Chrome/122.0.0.0 Safari/537.36'
+                                ),
+                            },
+                            timeout=20,
+                        )
+                        if r is not None and r.status_code == 200:
+                            candidate = r.json()
+                            if candidate.get('request', {}).get('text_tracks'):
+                                config = candidate
+                                print(f"    [PW] Config via cookie fetch (Layer 2, attempt {_l2_attempt+1})")
+                                break
+                            else:
+                                print(f"    [!] Cookie fetch returned empty text_tracks (attempt {_l2_attempt+1})")
+                                if _l2_attempt == 0:
+                                    page.wait_for_timeout(4000)
                         else:
-                            print(f"    [!] Cookie fetch returned empty text_tracks")
-                    else:
-                        print(f"    [!] Cookie fetch status: {r.status_code}")
-                except Exception as e:
-                    print(f"    [!] Cookie fetch failed: {e}")
+                            print(f"    [!] Cookie fetch status: {r.status_code if r else 'None'}")
+                            break
+                    except Exception as e:
+                        print(f"    [!] Cookie fetch failed: {e}")
+                        break
 
             if not config:
                 # Layer 3: click the video thumbnail within the showcase page to trigger
@@ -430,7 +437,19 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                     }}""")
                     if clicked:
                         print(f"    [PW] Clicked thumbnail — waiting for player...", flush=True)
-                        page.wait_for_timeout(6000)
+                        # Wait deterministically for the config XHR instead of a
+                        # fixed sleep. Exits as soon as the response arrives (fast path)
+                        # or after 15s (slow GitHub Actions runners).
+                        try:
+                            page.wait_for_response(
+                                lambda r: (
+                                    f'/video/{vid_id}/config' in r.url
+                                    and r.status == 200
+                                ),
+                                timeout=15000,
+                            )
+                        except Exception:
+                            pass  # timeout — player_configs may still have it via on_response
                         config = player_configs.get(vid_id)
                         if not config:
                             # Also try JS global after click
@@ -449,6 +468,34 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                         print(f"    [!] No thumbnail found for {vid_id} — DOM hrefs may use different format")
                 except Exception as e:
                     print(f"    [!] Click/eval failed: {e}")
+
+            if not config:
+                # Layer 4: navigate directly to the video URL within the authenticated
+                # browser context. More reliable than thumbnail click for new/edge-case
+                # videos. Re-navigates to showcase afterwards so Layer 3 still works
+                # for remaining videos.
+                try:
+                    vid_url = f"https://vimeo.com/{vid_id}"
+                    print(f"    [PW] Layer 4: direct navigation to {vid_url}", flush=True)
+                    try:
+                        with page.expect_response(
+                            lambda r: (
+                                f'/video/{vid_id}/config' in r.url
+                                and r.status == 200
+                            ),
+                            timeout=20000,
+                        ):
+                            page.goto(vid_url, wait_until='domcontentloaded', timeout=30000)
+                    except Exception:
+                        pass  # timeout or nav error — check player_configs anyway
+                    config = player_configs.get(vid_id)
+                    if config:
+                        print(f"    [PW] Config via direct navigation (Layer 4)")
+                    # Return to showcase so subsequent videos can use thumbnail click
+                    page.goto(showcase_url, wait_until='domcontentloaded', timeout=30000)
+                    page.wait_for_timeout(3000)
+                except Exception as e:
+                    print(f"    [!] Layer 4 failed: {e}")
 
             if not config:
                 print(f"    [!] No player config captured — skipping")
