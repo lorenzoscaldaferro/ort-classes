@@ -2,6 +2,63 @@
 
 All notable changes to the ORT Vimeo Scraper & RAG Knowledge Base project will be documented in this file.
 
+## [Fixed] - 2026-05-07 (Extracción de config desde HTML embebido — Layer 1b + resiliencia general)
+
+### Contexto
+El 06/05/2026 el scraper encontró la nueva clase de Business Intelligence (video ID `1189866883`) pero no guardó la transcripción — reportado como `sin config` en la notificación de Telegram. La clase de Ecommerce del mismo día sí se guardó correctamente.
+
+Investigación vía logs de GitHub Actions reveló la causa raíz: **Vimeo migró silenciosamente la arquitectura de su player**. Antes, el config del video (que contiene `text_tracks` con los subtítulos) se descargaba en un XHR separado a `player.vimeo.com/video/{id}/config`. Ahora ese config viene **embebido en el HTML de la página del player** (`player.vimeo.com/video/{id}?...`). El listener de respuestas miraba solo el endpoint viejo → nunca capturaba el config del nuevo video.
+
+Por qué ecommerce funcionó y BI no: durante la carga del showcase de ecommerce, Vimeo auto-cargó el video nuevo como "featured" → el listener lo capturó antes del loop. En el showcase de BI, el video auto-cargado fue otro → `1189866883` no quedó en `player_configs`.
+
+### Qué se implementó
+
+**Layer 1b — Parseo de config desde HTML del player** (`vimeo_scraper.py`)
+
+Nueva lógica en el handler `on_response`: cuando se captura `player.vimeo.com/video/{id}?...` (la página del player embed, no el endpoint `/config`), parsea el body HTML usando `json.JSONDecoder.raw_decode()` buscando el objeto JSON que contiene `text_tracks`. Usa marcadores `"cdn_url"`, `"player_url"`, `"request"` para localizar el inicio del objeto antes de llamar al decoder.
+
+```
+Layer 1  — response listener captura /config XHR (old-style, sigue soportado)
+Layer 1b — response listener parsea config del HTML del player embed (new-style)
+Layer 2  — cookie HTTP fetch directo al endpoint /config (works para videos viejos)
+Layer 3  — click en thumbnail + wait_for_response determinístico (≤15s)
+Layer 4  — navegación directa a showcase/video/{id} + wait_for_response (≤20s)
+```
+
+**Layer 2 — Retry con delay** (`vimeo_scraper.py`)
+
+Reintenta el cookie fetch una vez con 4s de espera. Algunos videos nuevos tardan en propagarse por CDN. Si el primer intento retorna `empty_text_tracks`, espera 4s y reintenta. Si el segundo también falla, pasa a Layer 3.
+
+**Layer 3 — Wait determinístico ampliado** (`vimeo_scraper.py`)
+
+- `page.wait_for_response()` ahora matchea `player.vimeo.com/video/{id}` (embed URL) además del old `/config` XHR.
+- Timeout subido de 6s fijo (sleep) a 15s determinístico — sale en cuanto llega la respuesta.
+
+**Layer 4 — URL con contexto de showcase** (`vimeo_scraper.py`)
+
+Cambiado de `vimeo.com/{vid_id}` (URL directa, no tiene el contexto de auth del showcase) a `vimeo.com/showcase/{showcase_id}/video/{vid_id}`. La cookie `{showcase_id}_albumpassword` aplica correctamente a esta URL.
+
+**Workflow resiliente a concurrencia** (`scraper.yml`)
+
+Agrega `git pull --rebase origin main` antes del `git push` en el step de commit. Previene errores si se hace un push manual al repo mientras el workflow está corriendo (como ocurrió durante el debugging de este mismo fix).
+
+**Soporte para videos con hash-based privacy** (`vimeo_scraper.py`)
+
+Extrae el hash del campo `link` de la respuesta de la API de Vimeo (formato `vimeo.com/{id}/{hash}`) y lo agrega como parámetro `?h={hash}` al cookie fetch del Layer 2. Para los videos actuales no hay hash, pero queda implementado para el futuro.
+
+### Diagnóstico en logs
+
+Mensaje `[PW] Config from player HTML (Layer 1b) for {vid_id}` indica cuándo se usa la nueva ruta. El nuevo handler también loggea todos los `player.vimeo.com` URLs capturados a nivel debug durante el desarrollo (luego limpiado).
+
+### Resultado verificado
+
+Run `25501304554` (07/05/2026):
+- `business_intelligence.txt — 16 clases` ✓ (era 15 antes del fix)
+- Telegram: `Nuevas: business_intelligence +1`
+- Todas las demás materias sin cambios (15/16 clases previas, sin regresiones)
+
+---
+
 ## [Feat] - 2026-05-01 (Observabilidad + silenciado automático de videos sin captions)
 
 ### Contexto
