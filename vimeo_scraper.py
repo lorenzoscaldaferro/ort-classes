@@ -261,14 +261,13 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                     if v and v.isdigit() and v not in seen_ids:
                         seen_ids.add(v)
                         videos.append(item)
-            elif ('player.vimeo.com' in url and response.status == 200
-                  and ('/config' in url or '/metadata' in url)):
-                print(f"[DBG] player.vimeo.com URL captured: {url[:120]}", flush=True)
-                if '/config' in url:
+            elif 'player.vimeo.com' in url:
+                print(f"[DBG] player: {response.status} {url[:140]}", flush=True)
+                if '/config' in url and response.status == 200:
                     v = url.split('/video/')[1].split('/')[0].split('?')[0]
                     player_configs[v] = response.json()
-        except Exception:
-            pass
+        except Exception as dbg_e:
+            print(f"[DBG] on_response exc: {dbg_e}", flush=True)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
