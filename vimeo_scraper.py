@@ -261,13 +261,41 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                     if v and v.isdigit() and v not in seen_ids:
                         seen_ids.add(v)
                         videos.append(item)
-            elif 'player.vimeo.com' in url:
-                print(f"[DBG] player: {response.status} {url[:140]}", flush=True)
-                if '/config' in url and response.status == 200:
-                    v = url.split('/video/')[1].split('/')[0].split('?')[0]
+            elif 'player.vimeo.com/video/' in url and response.status == 200:
+                v = url.split('/video/')[1].split('/')[0].split('?')[0]
+                if not v.isdigit():
+                    return
+                if '/config' in url:
+                    # Old-style separate XHR config endpoint
                     player_configs[v] = response.json()
-        except Exception as dbg_e:
-            print(f"[DBG] on_response exc: {dbg_e}", flush=True)
+                elif v not in player_configs:
+                    # New-style: config is embedded in the player HTML page.
+                    # Find the JSON object that contains "text_tracks" using
+                    # raw_decode so we don't need to know where it ends.
+                    body = response.text()
+                    if '"text_tracks"' in body:
+                        decoder = json.JSONDecoder()
+                        # Look for '{' preceding common top-level config keys
+                        for marker in ['"cdn_url"', '"player_url"', '"request"']:
+                            pos = body.find(marker)
+                            while pos != -1:
+                                start = body.rfind('{', 0, pos)
+                                if start == -1:
+                                    break
+                                try:
+                                    cfg, _ = decoder.raw_decode(body, start)
+                                    if (isinstance(cfg, dict)
+                                            and cfg.get('request', {}).get('text_tracks') is not None):
+                                        player_configs[v] = cfg
+                                        print(f"[PW] Config from player HTML (Layer 1b) for {v}", flush=True)
+                                        break
+                                except Exception:
+                                    pass
+                                pos = body.find(marker, pos + 1)
+                            if v in player_configs:
+                                break
+        except Exception:
+            pass
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -467,9 +495,10 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                         # fixed sleep. Exits as soon as the response arrives (fast path)
                         # or after 15s (slow GitHub Actions runners).
                         try:
+                            # Match either old /config XHR or new embed player page
                             page.wait_for_response(
                                 lambda r: (
-                                    f'/video/{vid_id}/config' in r.url
+                                    f'player.vimeo.com/video/{vid_id}' in r.url
                                     and r.status == 200
                                 ),
                                 timeout=15000,
