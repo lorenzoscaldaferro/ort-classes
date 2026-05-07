@@ -451,18 +451,7 @@ def _extract_vtt_playwright(showcase_url, password, subject_name, semester):
                                 print(f"    [PW] Config via cookie fetch (Layer 2, attempt {_l2_attempt+1})")
                                 break
                             else:
-                                req = candidate.get('request', {})
-                                vid_sec = candidate.get('video', {})
-                                top_keys = list(candidate.keys())
-                                print(
-                                    f"    [!] Cookie fetch returned empty text_tracks "
-                                    f"(attempt {_l2_attempt+1}) — "
-                                    f"top_keys={top_keys} "
-                                    f"video.title={vid_sec.get('title','?')!r} "
-                                    f"video.keys={list(vid_sec.keys())} "
-                                    f"req.keys={list(req.keys())} "
-                                    f"link_field={video_data.get('link','MISSING')!r}"
-                                )
+                                print(f"    [!] Cookie fetch returned empty text_tracks (attempt {_l2_attempt+1})")
                                 if _l2_attempt == 0:
                                     page.wait_for_timeout(4000)
                         else:
